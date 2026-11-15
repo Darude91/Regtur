@@ -1,0 +1,54 @@
+# 📺 Kijkdoos — IPTV voor Android, Windows en web
+
+Gratis films, series en live tv op één plek, plus je eigen IPTV-abonnementen.
+Alleen streams die echt werken worden getoond; de rest blijft verborgen (aan te zetten via ⚙).
+
+**Downloads (Android .apk / Windows .exe):** [Releases → latest](https://github.com/Darude91/Regtur/releases/latest)
+
+## Wat zit erin
+- **Films** en **Series** (en **Live TV** zodra er zenders zijn), Netflix-achtige rijen met thumbnails
+- **Gratis bronnen:**
+  - Internet Archive — duizenden rechtenvrije speelfilms, tv-series en tekenfilms (on demand)
+  - iptv-org — openbaar beschikbare film-, serie-, klassieke en animatiekanalen + Nederlandse zenders
+- **Abonnementen:** Xtream Codes (server + gebruikersnaam + wachtwoord) of een M3U-link.
+  Films, series (met seizoenen/afleveringen) en zenders worden automatisch ingedeeld.
+  Een verlopen of niet-werkend abonnement toont niets.
+- **Beschikbaarheidscheck:** elke stream wordt op de achtergrond getest; resultaten worden 6 uur onthouden.
+- Zoeken, detailpagina's, automatisch volgende aflevering, "Kopieer link" voor VLC.
+
+## Installeren
+| Platform | Hoe |
+|---|---|
+| Android | Download `Kijkdoos.apk` uit Releases en installeer (onbekende bronnen toestaan) |
+| Windows | `Kijkdoos-Setup-x.exe` of de portable `.exe` uit Releases |
+| Beide (lichtgewicht) | Open de web-versie in Chrome/Edge → *Installeren* / *Toevoegen aan startscherm* |
+
+De Android- en Windows-app hebben geen browserbeperkingen (CORS, http-streams) en tonen dus meer zenders dan de web-versie.
+
+## Web-versie met proxy (optioneel)
+Veel IPTV-servers blokkeren browsers. Draai `python3 proxy.py` (bijv. op een Raspberry Pi) en
+open `http://<pi-ip>:8090/`, of vul `http://<pi-ip>:8090/proxy?url=` in bij ⚙ → CORS-proxy.
+
+## Zelf bouwen
+Elke push naar `main` bouwt via GitHub Actions automatisch de web-versie (Pages), de APK en de EXE.
+Lokaal: `npm install && npm start` (Windows-app) of `npx cap add android && npx cap sync && npx cap open android`.
+
+> Kijkdoos levert zelf geen content; het speelt openbare gratis streams en jouw eigen abonnementen af.
+
+
+## Externe spelers & volgende aflevering
+Kies bij ⚙ een externe speler (Windows: VLC, mpv, MPC-HC, PotPlayer…; Android: VLC, mpv, MX Player, Just Player, Kodi…).
+Start je een aflevering vanuit een serie, dan gaat de speler automatisch door met de volgende:
+- **Windows (VLC/mpv/…):** Kijkdoos geeft een afspeellijst met de gekozen en alle volgende afleveringen mee.
+- **Android:** MX Player krijgt de hele lijst; bij VLC, mpv en Just Player start Kijkdoos de volgende aflevering zodra de speler meldt dat de vorige uit is. Geeft een speler dat niet door, dan vraagt Kijkdoos of de volgende mag starten.
+
+## Live TV zappen & afstandsbediening (Android TV)
+Start een zender uit een groep, dan zit de hele groep in een zapper:
+- **▲ / ▼** (of kanaal +/−, PageUp/PageDown): volgende / vorige zender · **cijfertoetsen**: direct naar zendernummer
+- **OK**: zenderlijst openen (kies met ▲ ▼, OK om te schakelen, Terug om te sluiten)
+- Zenders die niet werken worden overgeslagen
+- Externe speler (Windows): de hele groep gaat als afspeellijst mee; zap met "volgende/vorige" in VLC/mpv
+- Menu's en instellingen zijn volledig met de pijltjes en OK te bedienen; TV-modus staat aan op Android TV (⚙ → TV-modus)
+
+## Series per genre
+Series staan zowel per categorie van je aanbieder als in genre-rijen (Drama, Romantiek, Thrillers, Misdaad, Actie, …), gebaseerd op de genre-gegevens die de aanbieder per serie meegeeft. Een genre-rij verschijnt vanaf 8 series.
