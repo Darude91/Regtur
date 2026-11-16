@@ -63,8 +63,8 @@ jobs:
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASS: ${{ secrets.KEY_PASS }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           if [ -n "$KS_B64" ]; then
@@ -113,7 +113,3 @@ jobs:
             **Android (telefoon én Android TV):** download `Kijkdoos.apk` en installeer (sta "onbekende bronnen" toe). Op Android TV: installeer via de app *Downloader* of *Send Files to TV*; Kijkdoos staat daarna op je startscherm.
             **Windows:** `Kijkdoos-Setup-*.exe` (installer) of `Kijkdoos-Portable-*.exe` (zonder installatie).
           files: out/*
-```
-
-
-
