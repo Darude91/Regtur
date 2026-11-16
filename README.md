@@ -52,3 +52,12 @@ Start een zender uit een groep, dan zit de hele groep in een zapper:
 
 ## Series per genre
 Series staan zowel per categorie van je aanbieder als in genre-rijen (Drama, Romantiek, Thrillers, Misdaad, Actie, …), gebaseerd op de genre-gegevens die de aanbieder per serie meegeeft. Een genre-rij verschijnt vanaf 8 series.
+
+## Categorieën-menu
+Bovenin staat naast de taalknop een **☰ Categorieën**-menu: alle categorieën en genres van het huidige tabblad (Films / Series / Live TV), met zoekveld. Kies er één om hem als raster te openen. Genre-rijen staan op Series nu tussen de aanbiedercategorieën verspreid, net als bij Films.
+
+## Laatst gekeken
+Het tabblad **Laatst gekeken** toont per soort (films, series, zenders) wat je het laatst hebt afgespeeld (max. 60, alleen op dit apparaat bewaard). Klik een kaart om opnieuw te openen/af te spelen.
+
+## Instellingen/menu's met de afstandsbediening
+Zodra een scherm (instellingen, detail, raster, menu) open is, wordt de achtergrond vergrendeld en gaat de focus naar binnen; pijltjes werken dan altijd, ook als TV-modus niet automatisch herkend is. Zet anders in ⚙ "TV-modus" op **Aan**.

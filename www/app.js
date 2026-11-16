@@ -323,6 +323,27 @@ function liveItem(e, tab, src, srcName) {
 const loaders = new Set();
 async function track(name, fn) { loaders.add(name); updateStatus(); try { return await fn(); } finally { loaders.delete(name); updateStatus(); } }
 
+// ---------- Laatst gekeken ----------
+const HIST_MAX = 60;
+let histList = LS.get('hist', []);
+const histKey = it => [it.kind, it.src, it.title].join('|');
+const hashStr = t => { let h = 0; for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0; return (h >>> 0).toString(36); };
+function noteWatched(it) {
+  if (!it || !it.title || !it.kind) return;
+  const snap = {};
+  for (const [k, v] of Object.entries(it)) if (typeof v !== 'function' && k !== 'uid' && k !== 'check') snap[k] = v;
+  if (snap.desc) snap.desc = String(snap.desc).slice(0, 400);
+  snap.watchedAt = Date.now();
+  histList = [snap, ...histList.filter(h => histKey(h) !== histKey(snap))].slice(0, HIST_MAX);
+  LS.set('hist', histList);
+  refreshHist();
+}
+function refreshHist() {
+  for (const [kind, title] of [['film', 'Laatst bekeken films'], ['series', 'Laatst bekeken series'], ['live', 'Laatst bekeken zenders']]) {
+    const items = histList.filter(h => h.kind === kind).map(h => ({ ...h, uid: 'h' + hashStr(histKey(h)), tab: 'hist' }));
+    addRow({ id: 'hist-' + kind, tab: 'hist', title, items, src: 'hist' });
+  }
+}
 function addRow(row) {
   state.rows = state.rows.filter(r => r.id !== row.id);
   row.ver = (row.ver || 0) + 1;
@@ -782,8 +803,9 @@ function render() {
   const empty = $('#empty');
   empty.hidden = total > 0;
   if (!total) empty.innerHTML = state.q ? esc(`Niets gevonden voor “${state.q}”.`) :
+    state.tab === 'hist' ? 'Nog niets bekeken. Wat je afspeelt verschijnt hier.' :
     loaders.size ? '<img class="crest-sm" src="icons/icon-192.png" alt=""><br>Index laden…' :
-    'Nog niets beschikbaar. Voeg een abonnement toe of zet bronnen aan via ⚙.';
+    (state.tab === 'hist' ? 'Nog niets bekeken. Wat je afspeelt verschijnt hier.' : 'Nog niets beschikbaar. Voeg een abonnement toe of zet bronnen aan via ⚙.');
   renderLangs(); renderCats();
   hideSplash(total > 0 || !loaders.size);
 }
@@ -1035,7 +1057,7 @@ async function openDetail(it) {
   const addPlay = (url, title = it.title) => {
     const ext = state.settings.ext.always;
     btn(ext ? '▶ Afspelen in ' + extName() : '▶ Afspelen', 'primary', () => playAuto(url, title, it));
-    btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : openExternal(url, title)));
+    btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : (noteWatched(it), openExternal(url, title))));
     btn('Kopieer link', '', () => navigator.clipboard.writeText(url).then(() => toast('Link gekopieerd'), () => prompt('Stream-URL', url)));
   };
 
@@ -1092,6 +1114,7 @@ function episodeList(eps, it, asParts = false) {
 // ---------- Speler ----------
 let hls = null, idleT = null, playCtx = null;
 function play(url, title, it, eps, cur, zap) {
+  noteWatched(it);
   const p = $('#player'), v = $('#video'), msg = $('#pMsg');
   playCtx = { it, eps, cur: cur || url, zap: zap && zap.length > 1 ? zap : null };
   const zi = playCtx.zap ? playCtx.zap.indexOf(it) : -1;
@@ -1153,6 +1176,7 @@ const extPlugin = () => window.Capacitor && ((window.Capacitor.Plugins || {}).Ex
   (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('ExternalPlayer')));
 
 function playAuto(url, title, it, eps, cur, zap) {
+  noteWatched(it);
   if (state.settings.ext.always) openExternal(url, title, eps || zap ? { it, eps, cur: cur || url, zap } : null); else play(url, title, it, eps, cur, zap);
 }
 
@@ -1467,10 +1491,15 @@ function applyTV() {
   if (!$('#settings').hidden) renderSettings();
 }
 // Android-app waarin je pijltjestoetsen gebruikt zonder aanraking → TV-modus aan (en onthouden)
-document.addEventListener('touchstart', () => { touched = true; }, { capture: true, passive: true });
+let lastTouch = 0, kbUsed = false;
+document.addEventListener('touchstart', () => { touched = true; lastTouch = Date.now(); kbUsed = false; }, { capture: true, passive: true });
+document.addEventListener('mousedown', () => { kbUsed = false; }, true);
 document.addEventListener('keydown', e => {
-  if (ENV.cap && !touched && !autoTV && state.settings.tvMode === 'auto' && /^Arrow/.test(e.key)) {
-    autoTV = true; LS.set('autoTV', true); applyTV();
+  if (!/^(Arrow|Enter|Dpad|Select)/.test(e.key)) return;
+  kbUsed = true;
+  // Android-app waarin je pijltjes gebruikt en al een tijd niet hebt aangeraakt → TV-modus (alleen blijvend als er nooit aangeraakt is)
+  if (ENV.cap && !autoTV && state.settings.tvMode === 'auto' && /^Arrow/.test(e.key) && Date.now() - lastTouch > 60000) {
+    autoTV = true; if (!touched) LS.set('autoTV', true); applyTV();
   }
 }, true);
 
@@ -1502,7 +1531,7 @@ function restoreFocus(key, root = document) {
 }
 const retKeys = {};
 function rememberFocus(id) { retKeys[id] = focusKey(); }
-function returnFocus(id) { if (isTV() && retKeys[id]) restoreFocus(retKeys[id]); retKeys[id] = null; }
+function returnFocus(id) { if ((isTV() || kbUsed) && retKeys[id]) restoreFocus(retKeys[id]); retKeys[id] = null; }
 function closeLayer(el) { if (!el) return; el.hidden = true; returnFocus(el.id); }
 
 function activeLayer() {
@@ -1544,7 +1573,8 @@ document.addEventListener('keydown', e => {
   if (e.defaultPrevented) return;
   const tv = isTV();
   if (!$('#player').hidden) { if (playerKey(e, tv)) e.stopPropagation(); if ($('#pList').hidden || !tv) return; }
-  if (!tv) return;
+  const layerOpen = ['detail', 'settings', 'gridView', 'catPop', 'langPop'].some(id => !$('#' + id).hidden);
+  if (!tv && !layerOpen) return;
   const t = e.target;
   // D-pad OK op vinkjes
   if (e.key === 'Enter' && t.matches && t.matches('input[type=checkbox],input[type=radio]')) { t.click(); e.preventDefault(); return; }
@@ -1557,6 +1587,19 @@ document.addEventListener('keydown', e => {
   }
   if (spatial(dir)) e.preventDefault();
 }, true);
+// Open laag (instellingen, detail, raster, menu's): achtergrond vergrendelen en focus naar binnen halen,
+// ook als TV-modus niet herkend is — anders scrolt de pagina eronder en kun je niets kiezen.
+const LAYERS = { settings: 'select, input, .btn', detail: '.d-actions .btn.primary, .ep', gridView: '.card', catPop: '.cat', langPop: 'input, button' };
+function syncLayers() {
+  const open = Object.keys(LAYERS).filter(id => !$('#' + id).hidden);
+  document.body.classList.toggle('lock', open.length > 0);
+  for (const id of open) {
+    const el = $('#' + id);
+    if ((isTV() || kbUsed) && !el.contains(document.activeElement)) setTimeout(() => { if (!el.hidden && !el.contains(document.activeElement)) focusFirst(el, LAYERS[id]); }, 60);
+  }
+}
+const layerMO = new MutationObserver(syncLayers);
+for (const id of Object.keys(LAYERS)) layerMO.observe($('#' + id), { attributes: true, attributeFilter: ['hidden'] });
 // Eerste focus op TV: meteen op de eerste kaart, zodat de afstandsbediening werkt
 let tvFocusTries = 0;
 const tvFocusTimer = setInterval(() => {
@@ -1575,9 +1618,10 @@ function hideSplash(ready) {
 }
 setTimeout(() => hideSplash(true), 4000);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !ENV.native) navigator.serviceWorker.register('sw.js').catch(() => {});
-window.KD = { state, parseM3U, classify, ENV }; // voor debuggen/tests
+window.KD = { noteWatched, state, parseM3U, classify, ENV }; // voor debuggen/tests
 (async () => {
   if (cacheOn()) { const now = Date.now(); for (const [k, v] of await IDB.entries('avail')) if (v && now - v.t < cacheTTL()) avail.set(k, v); }
   loadAll();
 })();
 applyTV();
+refreshHist();
