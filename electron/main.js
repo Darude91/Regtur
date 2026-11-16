@@ -93,6 +93,9 @@ ipcMain.handle('kd:openPlayer', async (_e, o) => {
   if (!tokens.some(t => t.includes('{url}'))) argv.push(target);
   const base = path.basename(exe).toLowerCase();
   if (!multi && /^mpv/.test(base) && o.title) argv.unshift('--force-media-title=' + o.title);
+  // Hervatten + ondertitels: mpv bewaart zelf je positie; VLC vragen we dat ook te doen. NL-ondertitel, anders EN.
+  if (/^mpv/.test(base)) argv.unshift('--slang=nl,nld,dut,en,eng', ...(o.live ? [] : ['--save-position-on-quit']));
+  else if (/^vlc/.test(base)) argv.unshift('--sub-language=nl,en', ...(o.live ? [] : ['--qt-continue=2']));
   return new Promise(resolve => {
     try {
       const p = spawn(exe, argv, { detached: true, stdio: 'ignore' });

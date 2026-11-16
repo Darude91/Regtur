@@ -61,3 +61,9 @@ Het tabblad **Laatst gekeken** toont per soort (films, series, zenders) wat je h
 
 ## Instellingen/menu's met de afstandsbediening
 Zodra een scherm (instellingen, detail, raster, menu) open is, wordt de achtergrond vergrendeld en gaat de focus naar binnen; pijltjes werken dan altijd, ook als TV-modus niet automatisch herkend is. Zet anders in ⚙ "TV-modus" op **Aan**.
+
+## Hervatten & ondertitels
+- **Ingebouwde speler:** onthoudt per film/aflevering waar je gebleven bent (ook na een dag of herstart) en springt daar zelf naar toe. Knoppen tonen "⏵ Hervatten (12:34)" en "Van begin af"; afleveringen tonen hun hervat-tijd. Uitgekeken (laatste ~3%) telt als klaar.
+- **Externe speler Android:** Kijkdoos geeft de opgeslagen positie mee (MX Player, VLC, Just Player, mpv) en bewaart wat de speler bij stoppen terugmeldt.
+- **Externe speler Windows:** mpv start met `--save-position-on-quit`, VLC met `--qt-continue=2` (zelf hervatten).
+- **Ondertitels:** ingebouwde speler zet Nederlands aan, anders Engels (niet als de titel al Nederlands gesproken is). mpv krijgt `--slang=nl,nld,dut,en,eng`, VLC `--sub-language=nl,en`. Op Android bepaalt de externe speler zelf: stel daar in MX/VLC/mpv de voorkeurstaal ondertitels in op Nederlands, dan Engels.

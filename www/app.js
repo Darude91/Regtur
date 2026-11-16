@@ -323,6 +323,25 @@ function liveItem(e, tab, src, srcName) {
 const loaders = new Set();
 async function track(name, fn) { loaders.add(name); updateStatus(); try { return await fn(); } finally { loaders.delete(name); updateStatus(); } }
 
+// ---------- Onthouden waar je gebleven bent ----------
+let posMap = LS.get('pos', {});
+const fmtT = t => { t = Math.max(0, Math.round(t)); const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), x = t % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
+/** Opgeslagen tijd (sec) om te hervatten, of 0 als er niets (zinnigs) is. */
+function getPos(key) {
+  const p = key && posMap[key]; if (!p || p.t < 15) return 0;
+  if (p.d && p.t > p.d - Math.max(45, p.d * 0.03)) return 0;   // bijna uit = uitgekeken
+  return p.t;
+}
+function savePos(key, t, d) {
+  if (!key || !isFinite(t)) return;
+  if (t < 15 || (d && t > d - Math.max(45, d * 0.03))) { if (posMap[key]) { delete posMap[key]; LS.set('pos', posMap); } return; }
+  posMap[key] = { t: Math.round(t), d: d && isFinite(d) ? Math.round(d) : 0, at: Date.now() };
+  const keys = Object.keys(posMap);
+  if (keys.length > 400) for (const k of keys.sort((a, b) => posMap[a].at - posMap[b].at).slice(0, keys.length - 400)) delete posMap[k];
+  LS.set('pos', posMap);
+}
+function clearPos(key) { if (key && posMap[key]) { delete posMap[key]; LS.set('pos', posMap); } }
+
 // ---------- Laatst gekeken ----------
 const HIST_MAX = 60;
 let histList = LS.get('hist', []);
@@ -1056,7 +1075,9 @@ async function openDetail(it) {
   const btn = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'btn ' + cls; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
   const addPlay = (url, title = it.title) => {
     const ext = state.settings.ext.always;
-    btn(ext ? '▶ Afspelen in ' + extName() : '▶ Afspelen', 'primary', () => playAuto(url, title, it));
+    const rp = it.kind === 'live' ? 0 : getPos(url);
+    btn((rp ? '⏵ Hervatten (' + fmtT(rp) + ')' : '▶ Afspelen') + (ext ? ' in ' + extName() : ''), 'primary', () => playAuto(url, title, it));
+    if (rp) btn('Van begin af', '', () => { clearPos(url); playAuto(url, title, it, null, null, null, true); });
     btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : (noteWatched(it), openExternal(url, title))));
     btn('Kopieer link', '', () => navigator.clipboard.writeText(url).then(() => toast('Link gekopieerd'), () => prompt('Stream-URL', url)));
   };
@@ -1104,7 +1125,7 @@ function episodeList(eps, it, asParts = false) {
     '<div id="epList"></div>';
   const show = s => {
     $('#epList').innerHTML = eps.filter(e => e.season === s).map(e =>
-      `<button class="ep" data-url="${esc(e.url)}" data-t="${esc(e.title)}">${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ''}<span class="n">${e.ep}</span><span>${esc(e.title)}</span></button>`).join('');
+      `<button class="ep" data-url="${esc(e.url)}" data-t="${esc(e.title)}">${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ''}<span class="n">${e.ep}</span><span>${esc(e.title)}${getPos(e.url) ? ` <small class="resume">⏵ ${fmtT(getPos(e.url))}</small>` : ''}</span></button>`).join('');
   };
   show(seasons[0]);
   const sel = $('#seasonSel'); if (sel) sel.onchange = () => show(+sel.value);
@@ -1113,10 +1134,11 @@ function episodeList(eps, it, asParts = false) {
 
 // ---------- Speler ----------
 let hls = null, idleT = null, playCtx = null;
-function play(url, title, it, eps, cur, zap) {
+function play(url, title, it, eps, cur, zap, fromStart) {
+  flushPos();
   noteWatched(it);
   const p = $('#player'), v = $('#video'), msg = $('#pMsg');
-  playCtx = { it, eps, cur: cur || url, zap: zap && zap.length > 1 ? zap : null };
+  playCtx = { it, eps, cur: cur || url, zap: zap && zap.length > 1 ? zap : null, key: it && it.kind === 'live' ? null : url };
   const zi = playCtx.zap ? playCtx.zap.indexOf(it) : -1;
   $('#pTitle').textContent = zi >= 0 ? `${zi + 1} · ${title}` : title; msg.hidden = true;
   if (p.hidden) rememberFocus('player');
@@ -1136,11 +1158,61 @@ function play(url, title, it, eps, cur, zap) {
     v.src = state.settings.proxy && !ENV.native && ENV.https && /^http:/i.test(url) ? px(url) : url;
   }
   v.play().catch(() => {});
+  setupResume(v, fromStart);
+  setupSubs(v, it);
   v.onerror = () => fail(it, url, /\.(mkv|avi)(\?|$)/i.test(url) ? 'Dit formaat (MKV/AVI) speelt niet in de ingebouwde speler. Kopieer de link en open hem in VLC.' : 'Kan stream niet afspelen.');
-  v.onended = () => playAdjacent(1); // volgende aflevering
+  v.onended = () => { clearPos(playCtx && playCtx.key); if (playCtx) playCtx.key = null; playAdjacent(1); }; // volgende aflevering
   if (p.requestFullscreen && matchMedia('(pointer:coarse)').matches && !isTV()) p.requestFullscreen().catch(() => {});
   try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch {}
   poke();
+}
+/** Eén keer naar de opgeslagen tijd springen zodra de duur bekend is; daarna elke ~5 s bewaren. */
+let lastPosSave = 0;
+function setupResume(v, fromStart) {
+  const key = playCtx && playCtx.key; if (!key) { v.ontimeupdate = null; return; }
+  const t0 = fromStart ? 0 : getPos(key);
+  if (fromStart) clearPos(key);
+  if (t0) {
+    const seek = () => { try { v.currentTime = t0; toast('Hervat op ' + fmtT(t0), 2500); } catch {} };
+    if (v.readyState >= 1) seek(); else v.addEventListener('loadedmetadata', seek, { once: true });
+  }
+  v.ontimeupdate = () => {
+    const n = Date.now(); if (n - lastPosSave < 5000 || !playCtx || playCtx.key !== key) return;
+    lastPosSave = n; if (v.currentTime > 0) savePos(key, v.currentTime, v.duration);
+  };
+  v.onpause = () => { if (playCtx && playCtx.key === key && v.currentTime > 0 && !v.ended) savePos(key, v.currentTime, v.duration); };
+}
+function flushPos() {
+  const v = $('#video'); if (!playCtx || !playCtx.key || !v || !v.currentTime || v.ended) return;
+  savePos(playCtx.key, v.currentTime, v.duration);
+}
+window.addEventListener('pagehide', flushPos);
+document.addEventListener('visibilitychange', () => { if (document.hidden) flushPos(); });
+
+/** Ondertitels: Nederlands als die er is, anders Engels (niet bij titels die al Nederlands gesproken zijn). */
+const SUB_PREF = [/^(nl|nld|dut|nederlands|dutch)/i, /^(en|eng|engels|english)/i];
+function pickIndex(tracks) {
+  for (const re of SUB_PREF) {
+    const i = [...tracks].findIndex(t => re.test(t.language || '') || re.test(t.lang || '') || re.test(t.label || '') || re.test(t.name || ''));
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+function setupSubs(v, it) {
+  const dutchOnly = it && it.langs && it.langs.length && it.langs.every(l => /^nl/i.test(l));
+  if (dutchOnly) return;
+  const apply = () => {
+    const tt = [...v.textTracks].filter(t => t.kind === 'subtitles' || t.kind === 'captions');
+    if (!tt.length) return;
+    const i = pickIndex(tt);
+    tt.forEach((t, n) => { t.mode = n === i ? 'showing' : 'disabled'; });
+  };
+  v.textTracks.onaddtrack = () => setTimeout(apply, 50);
+  v.addEventListener('loadedmetadata', apply, { once: true });
+  if (hls) hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, (_, d) => {
+    const list = (d && d.subtitleTracks) || hls.subtitleTracks || [];
+    const i = pickIndex(list); if (i >= 0) { hls.subtitleTrack = i; hls.subtitleDisplay = true; }
+  });
 }
 function fail(it, url, text) {
   const msg = $('#pMsg'); msg.hidden = false;
@@ -1175,9 +1247,9 @@ function extName() {
 const extPlugin = () => window.Capacitor && ((window.Capacitor.Plugins || {}).ExternalPlayer ||
   (window.Capacitor.registerPlugin && window.Capacitor.registerPlugin('ExternalPlayer')));
 
-function playAuto(url, title, it, eps, cur, zap) {
+function playAuto(url, title, it, eps, cur, zap, fromStart) {
   noteWatched(it);
-  if (state.settings.ext.always) openExternal(url, title, eps || zap ? { it, eps, cur: cur || url, zap } : null); else play(url, title, it, eps, cur, zap);
+  if (state.settings.ext.always) openExternal(url, title, eps || zap ? { it, eps, cur: cur || url, zap } : null, fromStart); else play(url, title, it, eps, cur, zap, fromStart);
 }
 
 /** Wachtrij voor een externe speler: gekozen aflevering + alle volgende (zodat de speler zelf doorgaat). */
@@ -1194,7 +1266,7 @@ function extQueue(url, title, ctx) {
   return [{ url, title }];
 }
 
-async function openExternal(url, title = '', ctx = null) {
+async function openExternal(url, title = '', ctx = null, fromStart = false) {
   const m = extMode(), list = extQueue(url, title, ctx);
   if (m === 'android' && ENV.cap) {
     const pkg = androidPkg(), plug = extPlugin();
@@ -1203,7 +1275,11 @@ async function openExternal(url, title = '', ctx = null) {
       // Spelers die een afspeellijst begrijpen (MX Player) krijgen alles in één keer; bij de rest
       // start Kijkdoos de volgende aflevering zodra de speler meldt dat de vorige uit is.
       for (let i = 0; i < list.length;) {
-        const r = await plug.open({ url: list[i].url, title: list[i].title, package: pkg, urls: list.slice(i).map(x => x.url), titles: list.slice(i).map(x => x.title) });
+        const live = list.live || (ctx && ctx.it && ctx.it.kind === 'live');
+        const start = live || (fromStart && i === 0) ? 0 : getPos(list[i].url);
+        const r = await plug.open({ url: list[i].url, title: list[i].title, package: pkg, urls: list.slice(i).map(x => x.url), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000) });
+        // onthoud waar je gestopt bent (bij een afspeellijst in de speler zelf weten we niet welk item het was)
+        if (!live && (!r.playlist || list.length === 1) && r.position > 0) { if (r.completed) clearPos(list[i].url); else savePos(list[i].url, r.position / 1000, r.duration > 0 ? r.duration / 1000 : 0); }
         if (list.length < 2 || r.playlist || list.live) break;                 // speler regelt het zelf / geen serie
         if (r.completed) { i++; if (i < list.length) toast('Volgende: ' + list[i].title, 3000); continue; }
         if (r.known) break;                                        // vroegtijdig gestopt door jou
@@ -1235,7 +1311,7 @@ async function openExternal(url, title = '', ctx = null) {
       if (found.length) { path = state.settings.ext.winPath = found[0].path; saveSettings(); }
     }
     if (!path) { toast('Kies eerst een externe speler bij ⚙ Instellingen'); renderSettings(); $('#settings').hidden = false; return; }
-    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url, title, playlist: list }).catch(e => ({ ok: false, msg: e.message }));
+    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url, title, playlist: list, live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
     if (!r.ok) toast('Openen mislukt: ' + (r.msg || 'onbekende fout'), 4000); else toast('Geopend in ' + extName() + (list.length > 1 ? (list.live ? ' — volgende zender: toets “volgende” in de speler' : ' — volgende afleveringen spelen automatisch') : ''));
     return;
   }
@@ -1249,6 +1325,7 @@ async function openExternal(url, title = '', ctx = null) {
 
 function stopPlayback(hide = true) {
   const v = $('#video');
+  if (hide) flushPos();
   if (hls) { hls.destroy(); hls = null; }
   v.onerror = null; v.pause(); v.removeAttribute('src'); v.load();
   if (hide) {
@@ -1618,7 +1695,7 @@ function hideSplash(ready) {
 }
 setTimeout(() => hideSplash(true), 4000);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !ENV.native) navigator.serviceWorker.register('sw.js').catch(() => {});
-window.KD = { noteWatched, state, parseM3U, classify, ENV }; // voor debuggen/tests
+window.KD = { setupSubs, noteWatched, state, parseM3U, classify, ENV }; // voor debuggen/tests
 (async () => {
   if (cacheOn()) { const now = Date.now(); for (const [k, v] of await IDB.entries('avail')) if (v && now - v.t < cacheTTL()) avail.set(k, v); }
   loadAll();

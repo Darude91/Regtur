@@ -282,3 +282,4 @@ body.tv .cat:focus{outline:calc(3*var(--u)) solid var(--acc)}
 
 body.lock{overflow:hidden}
 .modal :focus-visible,.overlay :focus-visible,.pop :focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.resume{color:var(--acc2);font-size:.8em;margin-left:6px}

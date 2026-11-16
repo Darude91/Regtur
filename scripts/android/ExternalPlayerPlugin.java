@@ -43,6 +43,13 @@ public class ExternalPlayerPlugin extends Plugin {
         i.putExtra("return_result", true);          // MX Player / Just Player / mpv-android
         i.putExtra("extra_title", title);
 
+        // Hervatten: MX/Just/mpv lezen "position" als int (ms), VLC als long (ms)
+        long startMs = call.getData() == null ? 0 : call.getData().optLong("position", 0);
+        if (startMs > 1000) {
+            if (pkg.startsWith("org.videolan")) i.putExtra("position", startMs);
+            else i.putExtra("position", (int) Math.min(startMs, Integer.MAX_VALUE));
+        }
+
         boolean playlist = false;
         if (pkg.startsWith("com.mxtech.videoplayer")) {
             // MX Player begrijpt een hele afspeellijst
