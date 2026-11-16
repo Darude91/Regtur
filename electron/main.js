@@ -114,5 +114,13 @@ ipcMain.handle('kd:openPlayer', async (_e, o) => {
   });
 });
 
+// ---------- Downloads (offline kijken) ----------
+const dl = require('./download');
+const dlDir = () => path.join(app.getPath('userData'), 'downloads');
+ipcMain.handle('kd:download', (e, o) => dl.download(dlDir(), o, (got, total) => { try { e.sender.send('kd:dlprogress', { id: o.id, got, total }); } catch {} }));
+ipcMain.handle('kd:dlpause', (_e, id) => dl.pause(id));
+ipcMain.handle('kd:dlremove', (_e, id) => dl.remove(dlDir(), id));
+ipcMain.handle('kd:dlfolder', () => shell.openPath(dlDir()));
+
 app.whenReady().then(() => { cleanTemp(); createWindow(); });
 app.on('window-all-closed', () => app.quit());

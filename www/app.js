@@ -172,8 +172,8 @@ async function http(url, { type = 'text', timeout = 20000, headers } = {}) {
 const IDB = (() => {
   let p;
   const open = () => p || (p = new Promise((res, rej) => {
-    const r = indexedDB.open('kijkdoos', 1);
-    r.onupgradeneeded = () => ['http', 'avail', 'omdb'].forEach(n => r.result.objectStoreNames.contains(n) || r.result.createObjectStore(n));
+    const r = indexedDB.open('kijkdoos', 2);
+    r.onupgradeneeded = () => ['http', 'avail', 'omdb', 'dl'].forEach(n => r.result.objectStoreNames.contains(n) || r.result.createObjectStore(n));
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }));
   const run = async (store, mode, fn) => {
@@ -366,6 +366,174 @@ function refreshHist() {
     addRow({ id: 'hist-' + kind, tab: 'hist', title, items, src: 'hist' });
   }
 }
+// ---------- Downloads (offline kijken) ----------
+let dlList = LS.get('dl', []).map(d => (d.status === 'busy' || d.status === 'queued') ? { ...d, status: 'part' } : d);
+const dlMeta = new Map();          // url -> { it, title, season, ep } (voor de knoppen)
+const dlId = url => 'd' + hashStr(url);
+const dlBy = url => dlList.find(d => d.url === url);
+const dlDone = url => { const d = dlBy(url); return d && d.status === 'done' ? d : null; };
+const saveDl = () => LS.set('dl', dlList);
+const fmtB = n => !n ? '' : n > 1e9 ? (n / 1e9).toFixed(2) + ' GB' : (n / 1e6).toFixed(n > 1e8 ? 0 : 1) + ' MB';
+const dlable = (url, it) => !!url && !(it && it.kind === 'live') && !isHls(url);
+
+/** Opslag per platform: Windows = map op schijf, Android = app-map, browser = IndexedDB. */
+let _dlb = null;
+function dlb() {
+  if (_dlb) return _dlb;
+  if (ENV.electron && window.kdNative && window.kdNative.download) {
+    const subs = new Map(); window.kdNative.onDownloadProgress(d => { const f = subs.get(d.id); if (f) f(d.got, d.total); });
+    return _dlb = {
+      folder: () => window.kdNative.openDownloads(),
+      start: (e, on) => { subs.set(e.id, on); return window.kdNative.download({ id: e.id, url: e.url }).then(r => { subs.delete(e.id); if (!r.ok) throw Object.assign(new Error(r.msg), { paused: r.canceled }); return { ref: r.path, size: r.size }; }); },
+      pause: e => window.kdNative.pauseDownload(e.id), remove: e => window.kdNative.removeDownload(e.id),
+      src: e => encodeURI('file:///' + e.ref.replace(/\\/g, '/')), ext: e => e.ref,
+    };
+  }
+  const plug = ENV.cap ? extPlugin() : null;
+  if (plug) {
+    const hs = new Map();
+    plug.addListener('dlprogress', ev => {
+      const h = hs.get(ev.id); if (!h) return;
+      if (ev.done) h.res({ ref: ev.path, size: ev.total || ev.got });
+      else if (ev.error) h.rej(new Error(ev.error));
+      else if (ev.paused) h.rej(Object.assign(new Error('gepauzeerd'), { paused: true }));
+      else h.on(ev.got, ev.total);
+    });
+    return _dlb = {
+      start: (e, on) => new Promise((res, rej) => { hs.set(e.id, { res, rej, on }); plug.download({ id: e.id, url: e.url }).catch(rej); }).finally(() => hs.delete(e.id)),
+      pause: e => plug.pauseDownload({ id: e.id }), remove: e => plug.removeDownload({ id: e.id }),
+      src: e => window.Capacitor.convertFileSrc('file://' + e.ref), ext: e => 'file://' + e.ref,
+    };
+  }
+  // gewone browser: bestand in IndexedDB (alleen kleine/medium bestanden verstandig; vereist CORS of proxy)
+  const urls = new Map(), acs = new Map();
+  return _dlb = {
+    web: true,
+    start: async (e, on) => {
+      const ac = new AbortController(); acs.set(e.id, ac);
+      try {
+        const r = await fetch(px(e.url), { signal: ac.signal }); if (!r.ok) throw new Error('HTTP ' + r.status);
+        const total = +r.headers.get('content-length') || 0, chunks = []; let got = 0;
+        const rd = r.body.getReader();
+        for (;;) { const { done, value } = await rd.read(); if (done) break; chunks.push(value); got += value.length; on(got, total); }
+        const blob = new Blob(chunks, { type: r.headers.get('content-type') || 'video/mp4' });
+        await IDB.set('dl', e.id, blob); urls.set(e.id, URL.createObjectURL(blob));
+        return { ref: e.id, size: blob.size };
+      } catch (err) { throw Object.assign(err, { paused: ac.signal.aborted }); } finally { acs.delete(e.id); }
+    },
+    pause: e => { const a = acs.get(e.id); if (a) a.abort(); }, remove: e => { urls.delete(e.id); return IDB.clear && IDB.set('dl', e.id, undefined); },
+    src: e => urls.get(e.id) || '', ext: () => '',
+    prepare: async e => { if (!urls.has(e.id)) { const b = await IDB.get('dl', e.id); if (b) urls.set(e.id, URL.createObjectURL(b)); } },
+  };
+}
+/** Afspeel-URL van een gedownload bestand (of null → gewoon streamen). */
+function dlSrc(url) { const d = dlDone(url); if (!d) return null; try { return dlb().src(d) || null; } catch { return null; } }
+function dlExt(url) { const d = dlDone(url); if (!d) return url; try { return dlb().ext(d) || url; } catch { return url; } }
+
+let dlRunning = null;
+function dlEnqueue(urls) {
+  let n = 0;
+  for (const url of urls) {
+    const m = dlMeta.get(url); if (!m || !dlable(url, m.it)) continue;
+    let d = dlBy(url);
+    if (d && (d.status === 'done' || d.status === 'busy' || d.status === 'queued')) continue;
+    if (!d) {
+      const it = m.it || {};
+      d = { id: dlId(url), url, title: m.title, it: { kind: it.kind, title: it.title, year: it.year, poster: it.poster, langs: it.langs, src: it.src }, season: m.season, ep: m.ep, poster: it.poster, at: Date.now() };
+      dlList.unshift(d);
+    }
+    d.status = 'queued'; d.err = ''; n++;
+  }
+  saveDl(); dlUI(); dlPump();
+  return n;
+}
+async function dlPump() {
+  if (dlRunning) return;
+  const e = dlList.slice().reverse().find(d => d.status === 'queued'); if (!e) return;
+  dlRunning = e; e.status = 'busy'; e.got = e.got || 0; dlUI();
+  try {
+    const r = await dlb().start(e, (g, t) => { e.got = g; e.total = t; dlUI(true); });
+    e.status = 'done'; e.ref = r.ref; e.size = r.size; e.got = e.total = r.size;
+    toast('Offline beschikbaar: ' + e.title, 3000);
+  } catch (err) {
+    e.status = err && err.paused ? 'part' : 'error'; e.err = (err && err.message) || '';
+    if (e.status === 'error') toast('Download mislukt: ' + e.title + (e.err ? ' (' + e.err + ')' : ''), 4000);
+  } finally { dlRunning = null; saveDl(); dlUI(); dlPump(); }
+}
+function dlPause(url) { const d = dlBy(url); if (!d) return; if (d.status === 'queued') { d.status = 'part'; saveDl(); dlUI(); } else if (d.status === 'busy') dlb().pause(d); }
+function dlRemove(url) {
+  const d = dlBy(url); if (!d) return;
+  if (d.status === 'busy') dlb().pause(d);
+  try { dlb().remove(d); } catch {}
+  dlList = dlList.filter(x => x !== d); saveDl(); dlUI();
+}
+const dlPct = d => d.total ? Math.min(99, Math.floor(d.got / d.total * 100)) : 0;
+function dlLabel(d, long) {
+  if (!d) return long ? '⬇ Downloaden' : '⬇';
+  if (d.status === 'done') return long ? '✔ Offline (verwijderen)' : '✔';
+  if (d.status === 'queued') return long ? '⏳ In wachtrij (stop)' : '⏳';
+  if (d.status === 'busy') return (long ? `⏸ ${dlPct(d)}% (pauzeer)` : dlPct(d) + '%');
+  return long ? '⟳ Hervatten' : '⟳';
+}
+function dlUI(light) {
+  for (const b of document.querySelectorAll('[data-dl]')) {
+    const d = dlBy(b.dataset.dl), long = b.classList.contains('btn');
+    b.textContent = dlLabel(d, long); b.classList.toggle('dl-done', !!d && d.status === 'done'); b.classList.toggle('dl-busy', !!d && d.status === 'busy');
+  }
+  const act = dlList.filter(d => d.status === 'busy' || d.status === 'queued').length;
+  const bd = $('#btnDl'); if (bd) { bd.classList.toggle('active', act > 0); bd.dataset.n = act || ''; }
+  if (!$('#dlView').hidden) renderDlView(light);
+}
+function dlBtnEl(url, title, it, se) {
+  dlMeta.set(url, { it, title, season: se && se.season, ep: se && se.ep });
+  const b = document.createElement('button'); b.className = 'btn'; b.dataset.dl = url; b.dataset.dlLong = '1';
+  b.textContent = dlLabel(dlBy(url), true); if (dlBy(url) && dlBy(url).status === 'done') b.classList.add('dl-done');
+  return b;
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-dl]'); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const url = b.dataset.dl, d = dlBy(url);
+  if (!d || d.status === 'part' || d.status === 'error') { dlEnqueue([url]); toast('Download gestart — voortgang bij ⬇', 2500); }
+  else if (d.status === 'done') { if (confirm('Offline bestand verwijderen?\n' + d.title)) dlRemove(url); }
+  else dlPause(url);
+}, true);
+
+function renderDlView(light) {
+  const box = $('#dlList');
+  const total = dlList.filter(d => d.status === 'done').reduce((a, d) => a + (d.size || 0), 0);
+  $('#dlInfo').textContent = dlList.length ? `${dlList.length} item${dlList.length === 1 ? '' : 's'} · ${fmtB(total) || '0 MB'} opgeslagen` : 'Nog niets gedownload. Open een film of aflevering en kies ⬇.';
+  $('#dlFolder').hidden = !(dlb().folder);
+  if (light && box.children.length === dlList.length) { // alleen voortgang bijwerken (geen focus verliezen)
+    dlList.forEach((d, i) => { const row = box.children[i]; if (row && row.dataset.url === d.url) { const st = $('.dl-st', row); if (st) st.textContent = dlStatusText(d); const f = $('.dl-fill', row); if (f) f.style.width = (d.status === 'done' ? 100 : dlPct(d)) + '%'; } });
+    return;
+  }
+  box.innerHTML = dlList.map(d => `<div class="dl-row" data-url="${esc(d.url)}">
+    ${d.poster ? `<img loading="lazy" src="${esc(d.poster)}" alt="" onerror="this.remove()">` : '<span class="dl-ph">🎞</span>'}
+    <div class="dl-main"><div class="dl-t">${esc(d.title)}</div><div class="dl-bar"><div class="dl-fill" style="width:${d.status === 'done' ? 100 : dlPct(d)}%"></div></div><div class="dl-st">${esc(dlStatusText(d))}</div></div>
+    <div class="dl-acts">${d.status === 'done' ? `<button class="btn primary" data-dlplay="${esc(d.url)}">▶</button>` : ''}
+      ${d.status === 'busy' || d.status === 'queued' ? `<button class="btn" data-dlstop="${esc(d.url)}">⏸</button>` : d.status !== 'done' ? `<button class="btn" data-dlgo="${esc(d.url)}">⟳</button>` : ''}
+      <button class="btn" data-dlrm="${esc(d.url)}">🗑</button></div></div>`).join('');
+}
+function dlStatusText(d) {
+  return d.status === 'done' ? '✔ Offline · ' + fmtB(d.size) : d.status === 'busy' ? `Downloaden… ${dlPct(d)}%${d.total ? ' · ' + fmtB(d.got) + ' / ' + fmtB(d.total) : ''}` :
+    d.status === 'queued' ? 'In wachtrij' : d.status === 'error' ? 'Mislukt' + (d.err ? ': ' + d.err : '') + ' — tik ⟳ om opnieuw te proberen' : 'Gepauzeerd' + (d.got && d.total ? ` · ${Math.floor(d.got / d.total * 100)}%` : '') + ' — tik ⟳ om te hervatten';
+}
+$('#btnDl').onclick = () => { rememberFocus('dlView'); renderDlView(); $('#dlView').hidden = false; };
+$('#dlFolder').onclick = () => { try { dlb().folder(); } catch {} };
+$('#dlList').addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) return;
+  const d = dlBy(t.dataset.dlplay || t.dataset.dlstop || t.dataset.dlgo || t.dataset.dlrm); if (!d) return;
+  if (t.dataset.dlplay) {
+    $('#dlView').hidden = true;
+    const eps = d.season != null ? [{ url: d.url, season: d.season, ep: d.ep, title: d.title }] : null;
+    playAuto(d.url, d.title, d.it, eps, eps ? d.url : null);
+  } else if (t.dataset.dlstop) dlPause(d.url);
+  else if (t.dataset.dlgo) dlEnqueue([d.url]);
+  else if (confirm('Verwijderen?\n' + d.title)) dlRemove(d.url);
+});
+function dlInit() { if (dlb().web) dlList.filter(d => d.status === 'done').forEach(d => dlb().prepare(d)); dlUI(); }
+
 function addRow(row) {
   state.rows = state.rows.filter(r => r.id !== row.id);
   row.ver = (row.ver || 0) + 1;
@@ -1082,6 +1250,7 @@ async function openDetail(it) {
     btn((rp ? '⏵ Hervatten (' + fmtT(rp) + ')' : '▶ Afspelen') + (ext ? ' in ' + extName() : ''), 'primary', () => playAuto(url, title, it));
     if (rp) btn('Van begin af', '', () => { clearPos(url); playAuto(url, title, it, null, null, null, true); });
     btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : (noteWatched(it), openExternal(url, title, { it }))));
+    if (dlable(url, it)) acts.appendChild(dlBtnEl(url, title, it));
     btn('Kopieer link', '', () => navigator.clipboard.writeText(url).then(() => toast('Link gekopieerd'), () => prompt('Stream-URL', url)));
   };
 
@@ -1127,11 +1296,17 @@ function episodeList(eps, it, asParts = false) {
     (seasons.length > 1 ? `<select id="seasonSel">${seasons.map(s => `<option value="${s}">Seizoen ${s}</option>`).join('')}</select>` : '') +
     '<div id="epList"></div>';
   const show = s => {
+    curSeason = s;
+    for (const e of eps) if (e.season === s) dlMeta.set(e.url, { it, title: `${it.title} — ${e.title}`, season: e.season, ep: e.ep });
     $('#epList').innerHTML = eps.filter(e => e.season === s).map(e =>
-      `<button class="ep" data-url="${esc(e.url)}" data-t="${esc(e.title)}">${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ''}<span class="n">${e.ep}</span><span>${esc(e.title)}${getPos(e.url) ? ` <small class="resume">⏵ ${fmtT(getPos(e.url))}</small>` : ''}</span></button>`).join('');
+      `<div class="eprow"><button class="ep" data-url="${esc(e.url)}" data-t="${esc(e.title)}">${e.img ? `<img loading="lazy" src="${esc(e.img)}" alt="">` : ''}<span class="n">${e.ep}</span><span>${esc(e.title)}${getPos(e.url) ? ` <small class="resume">⏵ ${fmtT(getPos(e.url))}</small>` : ''}</span></button>${dlable(e.url, it) ? `<button class="dlb${dlDone(e.url) ? ' dl-done' : ''}" data-dl="${esc(e.url)}" title="Downloaden">${dlLabel(dlBy(e.url), false)}</button>` : ''}</div>`).join('');
   };
+  let curSeason = seasons[0];
+  const dlSeasonBtn = document.createElement('button'); dlSeasonBtn.className = 'btn dlseason'; dlSeasonBtn.textContent = '⬇ Hele seizoen downloaden';
+  dlSeasonBtn.onclick = () => { const urls = eps.filter(e => e.season === curSeason && dlable(e.url, it)).map(e => e.url); const n = dlEnqueue(urls); toast(n ? `${n} afleveringen in de wachtrij — voortgang bij ⬇` : 'Niets nieuws om te downloaden', 3000); };
+  box.insertBefore(dlSeasonBtn, $('#epList'));
   show(seasons[0]);
-  const sel = $('#seasonSel'); if (sel) sel.onchange = () => show(+sel.value);
+  const sel = $('#seasonSel'); if (sel) sel.onchange = () => { show(+sel.value); dlUI(); };
   box.onclick = e => { const b = e.target.closest('.ep'); if (b) playAuto(b.dataset.url, `${it.title} — ${b.dataset.t}`, it, eps, b.dataset.url); };
 }
 
@@ -1149,7 +1324,8 @@ function play(url, title, it, eps, cur, zap, fromStart) {
   $('#video').controls = !isTV();
   if (isTV()) { try { document.activeElement && document.activeElement.blur(); p.focus(); } catch {} }
   stopPlayback(false);
-  const useHlsJs = isHls(url) && window.Hls && Hls.isSupported() && (!ENV.nativeHls || state.settings.proxy) && !ENV.cap;
+  const local = dlSrc(url);
+  const useHlsJs = !local && isHls(url) && window.Hls && Hls.isSupported() && (!ENV.nativeHls || state.settings.proxy) && !ENV.cap;
   if (useHlsJs) {
     hls = new Hls({
       enableWorker: true, lowLatencyMode: true,
@@ -1158,7 +1334,7 @@ function play(url, title, it, eps, cur, zap, fromStart) {
     hls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) fail(it, url, d.type === 'networkError' ? 'Stream niet bereikbaar.' : 'Kan stream niet afspelen.'); });
     hls.loadSource(url); hls.attachMedia(v);
   } else {
-    v.src = state.settings.proxy && !ENV.native && ENV.https && /^http:/i.test(url) ? px(url) : url;
+    v.src = local || (state.settings.proxy && !ENV.native && ENV.https && /^http:/i.test(url) ? px(url) : url);
   }
   v.play().catch(() => {});
   setupResume(v, fromStart);
@@ -1355,7 +1531,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       for (let i = 0; i < list.length;) {
         const live = list.live || (ctx && ctx.it && ctx.it.kind === 'live');
         const start = live || (fromStart && i === 0) ? 0 : getPos(list[i].url);
-        const r = await plug.open({ url: list[i].url, title: list[i].title, package: pkg, urls: list.slice(i).map(x => x.url), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '' });
+        const r = await plug.open({ url: dlExt(list[i].url), title: list[i].title, package: pkg, urls: list.slice(i).map(x => dlExt(x.url)), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '' });
         // onthoud waar je gestopt bent (bij een afspeellijst in de speler zelf weten we niet welk item het was)
         if (!live && (!r.playlist || list.length === 1) && r.position > 0) { if (r.completed) clearPos(list[i].url); else savePos(list[i].url, r.position / 1000, r.duration > 0 ? r.duration / 1000 : 0); }
         if (list.length < 2 || r.playlist || list.live) break;                 // speler regelt het zelf / geen serie
@@ -1389,7 +1565,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       if (found.length) { path = state.settings.ext.winPath = found[0].path; saveSettings(); }
     }
     if (!path) { toast('Kies eerst een externe speler bij ⚙ Instellingen'); renderSettings(); $('#settings').hidden = false; return; }
-    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url, title, playlist: list, subUrl, live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
+    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url: dlExt(url), title, playlist: list.map(x => ({ ...x, url: dlExt(x.url) })), subUrl, live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
     if (!r.ok) toast('Openen mislukt: ' + (r.msg || 'onbekende fout'), 4000); else toast('Geopend in ' + extName() + (list.length > 1 ? (list.live ? ' — volgende zender: toets “volgende” in de speler' : ' — volgende afleveringen spelen automatisch') : ''));
     return;
   }
@@ -1619,13 +1795,13 @@ document.addEventListener('keydown', e => {
   if (!$('#player').hidden) { if (!$('#pList').hidden) return closeZapList(); return stopPlayback(); }
   if (!$('#catPop').hidden) { $('#catPop').hidden = true; $('#btnCats').focus({ preventScroll: true }); return; }
   if (!$('#langPop').hidden) { $('#langPop').hidden = true; $('#btnLang').focus({ preventScroll: true }); return; }
-  for (const id of ['detail', 'settings', 'gridView']) if (!$('#' + id).hidden) { closeLayer($('#' + id)); return; }
+  for (const id of ['detail', 'settings', 'gridView', 'dlView']) if (!$('#' + id).hidden) { closeLayer($('#' + id)); return; }
 });
 // Android terugknop (Capacitor)
 document.addEventListener('backbutton', () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })));
 if (ENV.cap && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
   window.Capacitor.Plugins.App.addListener('backButton', () => {
-    const open = !$('#player').hidden || !$('#langPop').hidden || !$('#catPop').hidden || ['detail', 'settings', 'gridView'].some(id => !$('#' + id).hidden);
+    const open = !$('#player').hidden || !$('#langPop').hidden || !$('#catPop').hidden || ['detail', 'settings', 'gridView', 'dlView'].some(id => !$('#' + id).hidden);
     if (open) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); else window.Capacitor.Plugins.App.exitApp();
   });
 }
@@ -1694,7 +1870,7 @@ function activeLayer() {
   if (!$('#player').hidden) return $('#pList').hidden ? $('#player') : $('#pList');
   if (!$('#catPop').hidden) return $('#catPop');
   if (!$('#langPop').hidden) return $('#langPop');
-  for (const id of ['detail', 'settings', 'gridView']) if (!$('#' + id).hidden) return $('#' + id);
+  for (const id of ['detail', 'settings', 'gridView', 'dlView']) if (!$('#' + id).hidden) return $('#' + id);
   return document.body;
 }
 /** Ruimtelijke navigatie met pijltjes/D-pad: ga naar het dichtstbijzijnde element in die richting. */
@@ -1729,7 +1905,7 @@ document.addEventListener('keydown', e => {
   if (e.defaultPrevented) return;
   const tv = isTV();
   if (!$('#player').hidden) { if (playerKey(e, tv)) e.stopPropagation(); if ($('#pList').hidden || !tv) return; }
-  const layerOpen = ['detail', 'settings', 'gridView', 'catPop', 'langPop'].some(id => !$('#' + id).hidden);
+  const layerOpen = ['detail', 'settings', 'gridView', 'dlView', 'catPop', 'langPop'].some(id => !$('#' + id).hidden);
   if (!tv && !layerOpen) return;
   const t = e.target;
   // D-pad OK op vinkjes
@@ -1745,7 +1921,7 @@ document.addEventListener('keydown', e => {
 }, true);
 // Open laag (instellingen, detail, raster, menu's): achtergrond vergrendelen en focus naar binnen halen,
 // ook als TV-modus niet herkend is — anders scrolt de pagina eronder en kun je niets kiezen.
-const LAYERS = { settings: 'select, input, .btn', detail: '.d-actions .btn.primary, .ep', gridView: '.card', catPop: '.cat', langPop: 'input, button' };
+const LAYERS = { dlView: '.dl-acts .btn, .btn', settings: 'select, input, .btn', detail: '.d-actions .btn.primary, .ep', gridView: '.card', catPop: '.cat', langPop: 'input, button' };
 function syncLayers() {
   const open = Object.keys(LAYERS).filter(id => !$('#' + id).hidden);
   document.body.classList.toggle('lock', open.length > 0);
@@ -1774,10 +1950,11 @@ function hideSplash(ready) {
 }
 setTimeout(() => hideSplash(true), 4000);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !ENV.native) navigator.serviceWorker.register('sw.js').catch(() => {});
-window.KD = { setupSubs, noteWatched, state, parseM3U, classify, ENV }; // voor debuggen/tests
+window.KD = { openDetail, setupSubs, noteWatched, state, parseM3U, classify, ENV }; // voor debuggen/tests
 (async () => {
   if (cacheOn()) { const now = Date.now(); for (const [k, v] of await IDB.entries('avail')) if (v && now - v.t < cacheTTL()) avail.set(k, v); }
   loadAll();
 })();
 applyTV();
 refreshHist();
+dlInit();

@@ -47,6 +47,24 @@ if app_attrs:
     s = s.replace('<application', '<application ' + ' '.join(app_attrs), 1)
 manifest.write_text(s, encoding='utf8')
 
+# Gedownloade bestanden (app-map op de opslag) delen met externe spelers via de FileProvider van Capacitor
+xml = res / 'xml'; xml.mkdir(parents=True, exist_ok=True)
+(xml / 'file_paths.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="kd_external" path="." />
+    <external-files-path name="kd_files" path="." />
+    <files-path name="kd_internal" path="." />
+    <cache-path name="kd_cache" path="." />
+</paths>
+''', encoding='utf8')
+s = manifest.read_text(encoding='utf8')
+if 'fileprovider' not in s:
+    prov = ('        <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.fileprovider" '
+            'android:exported="false" android:grantUriPermissions="true">\n'
+            '            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />\n        </provider>\n')
+    s = s.replace('</application>', prov + '    </application>', 1)
+    manifest.write_text(s, encoding='utf8')
+
 # iconen
 shutil.rmtree(res / 'mipmap-anydpi-v26', ignore_errors=True)
 for d, size in (('mdpi', 48), ('hdpi', 72), ('xhdpi', 96), ('xxhdpi', 144), ('xxxhdpi', 192)):

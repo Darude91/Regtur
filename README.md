@@ -70,3 +70,10 @@ Zodra een scherm (instellingen, detail, raster, menu) open is, wordt de achtergr
 
 ## Ondertitels via OpenSubtitles
 Er zit een standaard-API-sleutel in de app; een eigen sleutel kan bij ⚙ → "Ondertitels (OpenSubtitles)". Heeft een stream geen eigen ondertitels, dan zoekt Kijkdoos Nederlands, anders Engels, en zet die aan. Gevonden ondertitels worden lokaal bewaard (telt dus maar één download). Ingebouwde speler: altijd; Windows: mpv/VLC bij losse films en afleveringen; Android: MX Player/Just Player/VLC voor de eerste titel.
+
+## Downloads (offline kijken)
+Bij elke film en aflevering staat een **⬇**-knop (bij een serie ook "Hele seizoen downloaden"). Gedownloade titels spelen ook zonder internet, in de ingebouwde én in de externe speler. Overzicht, voortgang, pauzeren/hervatten en verwijderen via de **⬇**-knop bovenin.
+- **Windows:** bestanden komen in de app-map (`%APPDATA%\Kijkdoos\downloads`); in het overzicht opent een knop die map. Afgebroken downloads hervatten.
+- **Android/Android TV:** opslag in de app-map van het toestel (geen toestemming nodig). Externe spelers krijgen het bestand via een FileProvider (`scripts/patch-android.py` regelt dat). Downloads lopen zolang de app open is; daarna kun je ze hervatten.
+- **Browser:** opgeslagen in IndexedDB (handig voor kleine bestanden; vereist CORS of proxy).
+- Livezenders en HLS-streams (.m3u8) kunnen niet gedownload worden.

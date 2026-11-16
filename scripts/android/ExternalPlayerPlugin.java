@@ -16,7 +16,17 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import androidx.core.content.FileProvider;
+
 import org.json.JSONException;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Opent een stream in een externe speler (VLC, mpv, MX Player, Just Player, Kodi, …) en meldt terug
@@ -70,7 +80,7 @@ public class ExternalPlayerPlugin extends Plugin {
                     Uri[] list = new Uri[urls.length()];
                     String[] names = new String[urls.length()];
                     for (int n = 0; n < list.length; n++) {
-                        list[n] = Uri.parse(urls.getString(n));
+                        list[n] = toUri(urls.getString(n), pkg);
                         names[n] = titles != null && n < titles.length() ? titles.getString(n) : "";
                     }
                     i.putExtra("video_list", list);
@@ -87,7 +97,9 @@ public class ExternalPlayerPlugin extends Plugin {
         ActivityNotFoundException last = null;
         for (String type : types) {
             Intent launch = new Intent(i);
-            if (type == null) launch.setData(Uri.parse(url)); else launch.setDataAndType(Uri.parse(url), type);
+            Uri dataUri = toUri(url, pkg);
+            launch.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (type == null) launch.setData(dataUri); else launch.setDataAndType(dataUri, type);
             if (pkg.isEmpty()) launch = Intent.createChooser(launch, title.isEmpty() ? "Afspelen met" : title);
             else launch.setPackage(pkg);
             try {
@@ -102,6 +114,124 @@ public class ExternalPlayerPlugin extends Plugin {
         }
         if (!pkg.isEmpty() && !installed(pkg)) call.reject("niet geïnstalleerd", "NOT_INSTALLED");
         else call.reject("speler wil deze stream niet openen", "OPEN_FAILED");
+    }
+
+    /** Lokale (gedownloade) bestanden gaan via FileProvider naar de speler; streams blijven gewone URL's. */
+    private Uri toUri(String s, String pkg) {
+        if (s != null && s.startsWith("file://")) {
+            try {
+                File f = new File(Uri.parse(s).getPath());
+                Uri u = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".fileprovider", f);
+                if (pkg != null && !pkg.isEmpty()) getContext().grantUriPermission(pkg, u, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                return u;
+            } catch (Exception ignored) { }
+        }
+        return Uri.parse(s);
+    }
+
+    // ---------- Downloads voor offline kijken ----------
+    private final Map<String, Boolean> stops = new ConcurrentHashMap<>();
+
+    private File dlDir() {
+        File d = getContext().getExternalFilesDir("downloads");
+        if (d == null) d = new File(getContext().getFilesDir(), "downloads");
+        //noinspection ResultOfMethodCallIgnored
+        d.mkdirs();
+        return d;
+    }
+
+    private static String extOf(String url) {
+        try {
+            String p = Uri.parse(url).getPath();
+            int dot = p == null ? -1 : p.lastIndexOf('.');
+            if (dot >= 0) {
+                String e = p.substring(dot).toLowerCase();
+                if (e.matches("\\.[a-z0-9]{2,5}")) return e;
+            }
+        } catch (Exception ignored) { }
+        return ".mp4";
+    }
+
+    private void dlEvent(String id, long got, long total, boolean done, String error, String path, boolean paused) {
+        JSObject o = new JSObject();
+        o.put("id", id); o.put("got", got); o.put("total", total); o.put("done", done);
+        if (error != null) o.put("error", error);
+        if (path != null) o.put("path", path);
+        o.put("paused", paused);
+        notifyListeners("dlprogress", o);
+    }
+
+    @PluginMethod
+    public void download(PluginCall call) {
+        final String id = call.getString("id"), url = call.getString("url");
+        if (id == null || url == null) { call.reject("id/url ontbreekt"); return; }
+        if (stops.containsKey(id) && !stops.get(id)) { call.resolve(); return; }   // loopt al
+        stops.put(id, false);
+        final File file = new File(dlDir(), id + extOf(url));
+        new Thread(() -> {
+            HttpURLConnection c = null;
+            try {
+                long have = file.exists() ? file.length() : 0;
+                String cur = url;
+                for (int hop = 0; hop < 6; hop++) {
+                    c = (HttpURLConnection) new URL(cur).openConnection();
+                    c.setInstanceFollowRedirects(false);
+                    c.setConnectTimeout(20000); c.setReadTimeout(30000);
+                    c.setRequestProperty("User-Agent", "Kijkdoos/1.2");
+                    if (have > 0) c.setRequestProperty("Range", "bytes=" + have + "-");
+                    int code = c.getResponseCode();
+                    if (code >= 300 && code < 400 && c.getHeaderField("Location") != null) {
+                        cur = new URL(new URL(cur), c.getHeaderField("Location")).toString(); c.disconnect(); continue;
+                    }
+                    break;
+                }
+                int code = c.getResponseCode();
+                if (code == 416 && have > 0) { dlEvent(id, have, have, true, null, file.getAbsolutePath(), false); return; }
+                if (code != 200 && code != 206) throw new Exception("HTTP " + code);
+                boolean append = code == 206 && have > 0;
+                if (!append) have = 0;
+                long len = c.getContentLengthLong();
+                long total = len > 0 ? have + len : 0;
+                long got = have, last = 0;
+                try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(file, append)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        if (Boolean.TRUE.equals(stops.get(id))) { dlEvent(id, got, total, false, null, null, true); return; }
+                        out.write(buf, 0, n); got += n;
+                        long now = System.currentTimeMillis();
+                        if (now - last > 600) { last = now; dlEvent(id, got, total, false, null, null, false); }
+                    }
+                }
+                if (total > 0 && got < total) throw new Exception("onvolledig");
+                dlEvent(id, got, total > 0 ? total : got, true, null, file.getAbsolutePath(), false);
+            } catch (Exception e) {
+                dlEvent(id, 0, 0, false, e.getMessage() == null ? "mislukt" : e.getMessage(), null, false);
+            } finally {
+                stops.remove(id);
+                if (c != null) c.disconnect();
+            }
+        }, "kd-download-" + id).start();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void pauseDownload(PluginCall call) {
+        String id = call.getString("id");
+        if (id != null && stops.containsKey(id)) stops.put(id, true);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void removeDownload(PluginCall call) {
+        String id = call.getString("id");
+        if (id != null) {
+            if (stops.containsKey(id)) stops.put(id, true);
+            File[] fs = dlDir().listFiles();
+            if (fs != null) for (File f : fs) if (f.getName().startsWith(id + ".")) //noinspection ResultOfMethodCallIgnored
+                f.delete();
+        }
+        call.resolve();
     }
 
     private boolean installed(String pkg) {

@@ -36,6 +36,7 @@
       <p class="hint">Gratis films/series van Internet Archive worden opnieuw gezocht in de gekozen taal.</p>
     </div>
   </div>
+  <button class="iconbtn dlbtn" id="btnDl" title="Downloads (offline kijken)">⬇</button>
   <button class="iconbtn" id="btnSettings" title="Instellingen &amp; abonnementen">⚙</button>
 </header>
 
@@ -95,6 +96,18 @@
   <div class="p-bar" id="pBar" hidden><div class="track"><div class="fill" id="pFill"></div></div><span id="pTime"></span></div>
   <div class="p-list" id="pList" hidden></div>
   <div class="p-msg" id="pMsg" hidden></div>
+</div>
+
+<!-- Downloads -->
+<div class="modal" id="dlView" hidden>
+  <div class="modal-card settings">
+    <button class="iconbtn close" data-close>✕</button>
+    <h2>Downloads</h2>
+    <p class="hint" id="dlInfo"></p>
+    <div id="dlList"></div>
+    <button class="btn" id="dlFolder" hidden>Map met downloads openen</button>
+    <p class="hint">Gedownloade films en afleveringen staan alleen op dit apparaat en spelen ook zonder internet. Livezenders en HLS-streams kunnen niet gedownload worden.</p>
+  </div>
 </div>
 
 <!-- Instellingen -->
