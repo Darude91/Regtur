@@ -114,3 +114,7 @@ jobs:
             **Windows:** `Kijkdoos-Setup-*.exe` (installer) of `Kijkdoos-Portable-*.exe` (zonder installatie).
           files: out/*
 ```
+
+<FollowUp>
+Wil je dat ik onderdelen van deze **GitHub Actions workflow** aanpas, uitleg of controleer op fouten?
+</FollowUp>
