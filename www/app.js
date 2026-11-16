@@ -62,6 +62,9 @@ if (!('scan' in state.settings)) state.settings.scan = false;
 state.settings.cache = Object.assign({ on: false, ttl: 6 * 3600e3 }, state.settings.cache || {});
 state.settings.grid = Object.assign({ sort: 'pop', decade: '', rating: 0 }, state.settings.grid || {});
 if (!('omdbKey' in state.settings)) state.settings.omdbKey = '';
+if (!('osKey' in state.settings)) state.settings.osKey = '';
+const OS_DEFAULT_KEY = 'EYlvVF78m17dj1WcoRSVKCU0p4FxIMHa'; // standaard-sleutel; eigen sleutel in ⚙ gaat voor
+const osKeyVal = () => state.settings.osKey || OS_DEFAULT_KEY;
 if (state.settings.langs.length) setTimeout(() => applyIptvLangs(), 0);
 if (!state.settings.tvMode) state.settings.tvMode = 'auto';
 if (!state.settings.tvScale) state.settings.tvScale = 1;
@@ -1078,7 +1081,7 @@ async function openDetail(it) {
     const rp = it.kind === 'live' ? 0 : getPos(url);
     btn((rp ? '⏵ Hervatten (' + fmtT(rp) + ')' : '▶ Afspelen') + (ext ? ' in ' + extName() : ''), 'primary', () => playAuto(url, title, it));
     if (rp) btn('Van begin af', '', () => { clearPos(url); playAuto(url, title, it, null, null, null, true); });
-    btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : (noteWatched(it), openExternal(url, title))));
+    btn(ext ? 'Ingebouwde speler' : '↗ ' + extName(), '', () => (ext ? play(url, title, it) : (noteWatched(it), openExternal(url, title, { it }))));
     btn('Kopieer link', '', () => navigator.clipboard.writeText(url).then(() => toast('Link gekopieerd'), () => prompt('Stream-URL', url)));
   };
 
@@ -1160,6 +1163,7 @@ function play(url, title, it, eps, cur, zap, fromStart) {
   v.play().catch(() => {});
   setupResume(v, fromStart);
   setupSubs(v, it);
+  osForPlayer(v, it, playCtx.key);
   v.onerror = () => fail(it, url, /\.(mkv|avi)(\?|$)/i.test(url) ? 'Dit formaat (MKV/AVI) speelt niet in de ingebouwde speler. Kopieer de link en open hem in VLC.' : 'Kan stream niet afspelen.');
   v.onended = () => { clearPos(playCtx && playCtx.key); if (playCtx) playCtx.key = null; playAdjacent(1); }; // volgende aflevering
   if (p.requestFullscreen && matchMedia('(pointer:coarse)').matches && !isTV()) p.requestFullscreen().catch(() => {});
@@ -1189,6 +1193,74 @@ function flushPos() {
 window.addEventListener('pagehide', flushPos);
 document.addEventListener('visibilitychange', () => { if (document.hidden) flushPos(); });
 
+// ---------- Ondertitels van OpenSubtitles (als de stream zelf geen heeft) ----------
+const OS_API = 'https://api.opensubtitles.com/api/v1';
+const dutchOnlyItem = it => !!(it && it.langs && it.langs.length && it.langs.every(l => /^nl/i.test(l)));
+async function osCall(path, body) {
+  const key = osKeyVal(); if (!key) throw new Error('geen sleutel');
+  const r = await withTimeout(fetch(px(OS_API + path), {
+    method: body ? 'POST' : 'GET', cache: 'no-store',
+    headers: { 'Api-Key': key, 'User-Agent': 'Kijkdoos v1.2', Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }), 15000);
+  if (r.status === 406 || r.status === 429) { const e = new Error('limiet'); e.limit = true; throw e; }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+/** Zoek de beste Nederlandse (anders Engelse) ondertitel; geeft { fileId, lang } of null. */
+async function osFind(it, se) {
+  const title = cleanTitle(it.title);
+  for (const lang of ['nl', 'en']) {
+    const q = new URLSearchParams({ query: title, languages: lang, order_by: 'download_count', order_direction: 'desc', ai_translated: 'exclude', hearing_impaired: 'exclude' });
+    if (se && se.season != null) { q.set('type', 'episode'); q.set('season_number', se.season); q.set('episode_number', se.ep); }
+    else { q.set('type', 'movie'); if (it.year) q.set('year', it.year); }
+    const j = await osCall('/subtitles?' + q.toString());
+    const hit = (j.data || []).find(d => d.attributes && d.attributes.files && d.attributes.files[0]);
+    if (hit) return { fileId: hit.attributes.files[0].file_id, lang };
+  }
+  return null;
+}
+const osKeyFor = (it, se, fmt) => ['os', fmt, it.kind, cleanTitle(it.title).toLowerCase(), it.year || '', se ? se.season + 'x' + se.ep : ''].join('|');
+/** fmt 'webvtt' (voor <track>) of 'srt' (externe speler). Resultaat: { link, lang } of { text, lang }. */
+async function osGet(it, se, fmt) {
+  if (!osKeyVal() || !it || it.kind === 'live' || dutchOnlyItem(it)) return null;
+  const k = osKeyFor(it, se, fmt);
+  const c = await IDB.get('http', k);
+  if (fmt === 'webvtt' && c && c.v && c.v.text) return c.v;                       // al eens opgehaald: geen nieuwe download nodig
+  if (fmt === 'srt' && c && c.v && c.v.link && Date.now() - c.t < 3 * 3600e3) return c.v;
+  const f = await osFind(it, se); if (!f) return null;
+  const d = await osCall('/download', { file_id: f.fileId, sub_format: fmt });
+  if (!d.link) return null;
+  let v = { lang: f.lang, link: d.link };
+  if (fmt === 'webvtt') { const r = await withTimeout(fetch(px(d.link), { cache: 'no-store' }), 15000); if (!r.ok) throw new Error('HTTP ' + r.status); v = { lang: f.lang, text: await r.text() }; }
+  IDB.set('http', k, { v, t: Date.now() });
+  return v;
+}
+const epInfo = (eps, cur) => { const e = eps && eps.find(x => x.url === cur); return e && e.season != null ? { season: e.season, ep: e.ep } : null; };
+let osLimitToasted = false;
+function osError(e) {
+  if (e && e.limit) { if (!osLimitToasted) { osLimitToasted = true; toast('OpenSubtitles: daglimiet bereikt', 3500); } }
+  else if (e && e.message !== 'geen sleutel') console.warn('OpenSubtitles', e);
+}
+function osForPlayer(v, it, key) {
+  if (!osKeyVal() || !it || it.kind === 'live' || dutchOnlyItem(it)) return;
+  setTimeout(async () => {
+    if (!playCtx || playCtx.key !== key) return;
+    const have = [...v.textTracks].some(t => (t.kind === 'subtitles' || t.kind === 'captions') && t.mode === 'showing');
+    if (have) return;
+    try {
+      const r = await osGet(it, epInfo(playCtx.eps, playCtx.cur), 'webvtt'); if (!r || !r.text) return;
+      if (!playCtx || playCtx.key !== key) return;
+      const tr = document.createElement('track');
+      tr.kind = 'subtitles'; tr.label = r.lang === 'nl' ? 'Nederlands' : 'English'; tr.srclang = r.lang;
+      tr.src = URL.createObjectURL(new Blob([r.text], { type: 'text/vtt' }));
+      v.querySelectorAll('track').forEach(t => t.remove());
+      v.appendChild(tr); tr.track.mode = 'showing'; tr.default = true;
+      toast('Ondertitels: ' + tr.label, 2500);
+    } catch (e) { osError(e); }
+  }, 3500);
+}
+
 /** Ondertitels: Nederlands als die er is, anders Engels (niet bij titels die al Nederlands gesproken zijn). */
 const SUB_PREF = [/^(nl|nld|dut|nederlands|dutch)/i, /^(en|eng|engels|english)/i];
 function pickIndex(tracks) {
@@ -1199,8 +1271,7 @@ function pickIndex(tracks) {
   return -1;
 }
 function setupSubs(v, it) {
-  const dutchOnly = it && it.langs && it.langs.length && it.langs.every(l => /^nl/i.test(l));
-  if (dutchOnly) return;
+  if (dutchOnlyItem(it)) return;
   const apply = () => {
     const tt = [...v.textTracks].filter(t => t.kind === 'subtitles' || t.kind === 'captions');
     if (!tt.length) return;
@@ -1218,7 +1289,7 @@ function fail(it, url, text) {
   const msg = $('#pMsg'); msg.hidden = false;
   msg.innerHTML = esc(text) + `<br><br><button class="btn primary" id="pExt">↗ Open in ${esc(extName())}</button> <button class="btn" id="pCopy">Kopieer link</button>`;
   $('#pCopy').onclick = () => navigator.clipboard.writeText(url).then(() => toast('Link gekopieerd'));
-  $('#pExt').onclick = () => { const t = $('#pTitle').textContent, c = playCtx && (playCtx.eps || playCtx.zap) ? { it: playCtx.it, eps: playCtx.eps, cur: playCtx.cur, zap: playCtx.zap } : null; stopPlayback(); openExternal(url, t, c); };
+  $('#pExt').onclick = () => { const t = $('#pTitle').textContent, c = playCtx && playCtx.it ? { it: playCtx.it, eps: playCtx.eps, cur: playCtx.cur, zap: playCtx.zap } : null; stopPlayback(); openExternal(url, t, c); };
   if (playCtx && playCtx.zap) {
     msg.insertAdjacentHTML('beforeend', ' <button class="btn" id="pSkip">▲ Volgende zender</button>');
     $('#pSkip').onclick = () => zapTo(1);
@@ -1249,7 +1320,7 @@ const extPlugin = () => window.Capacitor && ((window.Capacitor.Plugins || {}).Ex
 
 function playAuto(url, title, it, eps, cur, zap, fromStart) {
   noteWatched(it);
-  if (state.settings.ext.always) openExternal(url, title, eps || zap ? { it, eps, cur: cur || url, zap } : null, fromStart); else play(url, title, it, eps, cur, zap, fromStart);
+  if (state.settings.ext.always) openExternal(url, title, it ? { it, eps, cur: cur || url, zap } : null, fromStart); else play(url, title, it, eps, cur, zap, fromStart);
 }
 
 /** Wachtrij voor een externe speler: gekozen aflevering + alle volgende (zodat de speler zelf doorgaat). */
@@ -1268,6 +1339,13 @@ function extQueue(url, title, ctx) {
 
 async function openExternal(url, title = '', ctx = null, fromStart = false) {
   const m = extMode(), list = extQueue(url, title, ctx);
+  // ondertitel (NL, anders EN) voor de eerste titel, via OpenSubtitles; mag het starten niet te lang ophouden
+  let subUrl = '';
+  if (ctx && ctx.it && !list.live && osKeyVal() && !dutchOnlyItem(ctx.it) && (m === 'android' || (m === 'windows' && list.length === 1))) {
+    toast('Ondertitels zoeken…', 2000);
+    try { const r = await Promise.race([osGet(ctx.it, epInfo(ctx.eps, list[0].url), 'srt'), new Promise(res => setTimeout(() => res(null), 9000))]); if (r && r.link) subUrl = r.link; }
+    catch (e) { osError(e); }
+  }
   if (m === 'android' && ENV.cap) {
     const pkg = androidPkg(), plug = extPlugin();
     if (!plug) return toast('Externe speler niet beschikbaar in deze versie');
@@ -1277,7 +1355,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       for (let i = 0; i < list.length;) {
         const live = list.live || (ctx && ctx.it && ctx.it.kind === 'live');
         const start = live || (fromStart && i === 0) ? 0 : getPos(list[i].url);
-        const r = await plug.open({ url: list[i].url, title: list[i].title, package: pkg, urls: list.slice(i).map(x => x.url), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000) });
+        const r = await plug.open({ url: list[i].url, title: list[i].title, package: pkg, urls: list.slice(i).map(x => x.url), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '' });
         // onthoud waar je gestopt bent (bij een afspeellijst in de speler zelf weten we niet welk item het was)
         if (!live && (!r.playlist || list.length === 1) && r.position > 0) { if (r.completed) clearPos(list[i].url); else savePos(list[i].url, r.position / 1000, r.duration > 0 ? r.duration / 1000 : 0); }
         if (list.length < 2 || r.playlist || list.live) break;                 // speler regelt het zelf / geen serie
@@ -1311,7 +1389,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       if (found.length) { path = state.settings.ext.winPath = found[0].path; saveSettings(); }
     }
     if (!path) { toast('Kies eerst een externe speler bij ⚙ Instellingen'); renderSettings(); $('#settings').hidden = false; return; }
-    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url, title, playlist: list, live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
+    const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url, title, playlist: list, subUrl, live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
     if (!r.ok) toast('Openen mislukt: ' + (r.msg || 'onbekende fout'), 4000); else toast('Geopend in ' + extName() + (list.length > 1 ? (list.live ? ' — volgende zender: toets “volgende” in de speler' : ' — volgende afleveringen spelen automatisch') : ''));
     return;
   }
@@ -1429,7 +1507,7 @@ function playAdjacent(d) {
 function renderSettings() {
   $('#setScan').checked = !!state.settings.scan; $('#setTV').value = state.settings.tvMode; $('#setTVScale').value = String(state.settings.tvScale);
   $('#setCache').checked = cacheOn(); $('#setCacheTTL').value = String(cacheTTL()); $('#setCacheTTL').disabled = !cacheOn();
-  $('#setOmdb').value = state.settings.omdbKey || '';
+  $('#setOmdb').value = state.settings.omdbKey || ''; $('#setOsKey').value = state.settings.osKey || '';
   $('#setProxy').value = state.settings.proxy || '';
   const e = state.settings.ext, m = extMode();
   $('#setExtAlways').checked = !!e.always;
@@ -1458,6 +1536,7 @@ $('#settings').addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'setCache') { state.settings.cache.on = t.checked; saveSettings(); renderSettings(); if (!t.checked) { IDB.clear('http'); IDB.clear('avail'); IDB.clear('omdb'); } toast(t.checked ? 'Cache aan' : 'Cache uit en geleegd — alles realtime'); }
   if (t.id === 'setCacheTTL') { state.settings.cache.ttl = +t.value; saveSettings(); }
+  if (t.id === 'setOsKey') { state.settings.osKey = t.value.trim(); saveSettings(); }
   if (t.id === 'setOmdb') { state.settings.omdbKey = t.value.trim(); saveSettings(); omdbMem.clear(); }
   if (t.id === 'setTV') { state.settings.tvMode = t.value; LS.set('autoTV', false); autoTV = false; saveSettings(); applyTV(); }
   if (t.id === 'setTVScale') { state.settings.tvScale = +t.value; saveSettings(); setUnit(); }

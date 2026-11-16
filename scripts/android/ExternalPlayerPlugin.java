@@ -50,6 +50,16 @@ public class ExternalPlayerPlugin extends Plugin {
             else i.putExtra("position", (int) Math.min(startMs, Integer.MAX_VALUE));
         }
 
+        // Ondertitel (OpenSubtitles): MX/Just Player lezen "subs", VLC "subtitles_location"
+        String subUrl = call.getData() == null ? "" : call.getData().optString("subUrl", "");
+        if (subUrl != null && !subUrl.isEmpty()) {
+            Uri su = Uri.parse(subUrl);
+            i.putExtra("subs", new Uri[]{ su });
+            i.putExtra("subs.enable", new Uri[]{ su });
+            i.putExtra("subs.name", new String[]{ "Nederlands" });
+            i.putExtra("subtitles_location", subUrl);
+        }
+
         boolean playlist = false;
         if (pkg.startsWith("com.mxtech.videoplayer")) {
             // MX Player begrijpt een hele afspeellijst

@@ -67,3 +67,6 @@ Zodra een scherm (instellingen, detail, raster, menu) open is, wordt de achtergr
 - **Externe speler Android:** Kijkdoos geeft de opgeslagen positie mee (MX Player, VLC, Just Player, mpv) en bewaart wat de speler bij stoppen terugmeldt.
 - **Externe speler Windows:** mpv start met `--save-position-on-quit`, VLC met `--qt-continue=2` (zelf hervatten).
 - **Ondertitels:** ingebouwde speler zet Nederlands aan, anders Engels (niet als de titel al Nederlands gesproken is). mpv krijgt `--slang=nl,nld,dut,en,eng`, VLC `--sub-language=nl,en`. Op Android bepaalt de externe speler zelf: stel daar in MX/VLC/mpv de voorkeurstaal ondertitels in op Nederlands, dan Engels.
+
+## Ondertitels via OpenSubtitles
+Er zit een standaard-API-sleutel in de app; een eigen sleutel kan bij ⚙ → "Ondertitels (OpenSubtitles)". Heeft een stream geen eigen ondertitels, dan zoekt Kijkdoos Nederlands, anders Engels, en zet die aan. Gevonden ondertitels worden lokaal bewaard (telt dus maar één download). Ingebouwde speler: altijd; Windows: mpv/VLC bij losse films en afleveringen; Android: MX Player/Just Player/VLC voor de eerste titel.

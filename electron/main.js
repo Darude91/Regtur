@@ -93,6 +93,15 @@ ipcMain.handle('kd:openPlayer', async (_e, o) => {
   if (!tokens.some(t => t.includes('{url}'))) argv.push(target);
   const base = path.basename(exe).toLowerCase();
   if (!multi && /^mpv/.test(base) && o.title) argv.unshift('--force-media-title=' + o.title);
+  // Ondertitel van OpenSubtitles: mpv kan een URL aan; VLC heeft een bestand nodig
+  if (o.subUrl && !multi) {
+    if (/^mpv/.test(base)) argv.unshift('--sub-file=' + o.subUrl);
+    else if (/^vlc/.test(base)) {
+      try {
+        const r = await fetch(o.subUrl); if (r.ok) { const f = path.join(os.tmpdir(), 'kijkdoos', 'sub-' + Date.now() + '.srt'); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(await r.arrayBuffer())); argv.unshift('--sub-file=' + f); }
+      } catch {}
+    }
+  }
   // Hervatten + ondertitels: mpv bewaart zelf je positie; VLC vragen we dat ook te doen. NL-ondertitel, anders EN.
   if (/^mpv/.test(base)) argv.unshift('--slang=nl,nld,dut,en,eng', ...(o.live ? [] : ['--save-position-on-quit']));
   else if (/^vlc/.test(base)) argv.unshift('--sub-language=nl,en', ...(o.live ? [] : ['--qt-continue=2']));
