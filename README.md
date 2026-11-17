@@ -109,3 +109,5 @@ De Android-build zoekt tijdens de build `dev.jdtech.mpv:libmpv` op Maven Central
 
 ## Nederlandse ondertitel
 Zit er in de stream geen Nederlandse ondertitel (en is de audio niet Nederlands), dan haalt de app er altijd een bij OpenSubtitles — ook als er al een Engelse in de stream zit. Is er helemaal geen ondertitel, dan eerst Nederlands, anders Engels. Geldt voor de browserspeler, mpv op Windows en mpv op Android. Instelling: ⚙ → OpenSubtitles.
+
+In de ingebouwde mpv-speler (Windows en Android) wordt de Nederlandse ondertitel pas ~6 seconden na het laden opgehaald, en alleen als er dan nog steeds geen Nederlandse ondertitel in de stream zit (fallback; de eigen sporen gaan altijd voor). Het bestand wordt eerst lokaal opgeslagen en daarna aan mpv toegevoegd. Zoeken doet eerst strikt (zonder SDH, met jaar), daarna ruimer.

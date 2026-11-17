@@ -168,6 +168,17 @@ ipcMain.handle('kd:mpvPlay', async (e, o) => {
     let idx = 0, pos = 0, dur = 0, lastSent = 0, rid = 100; const pending = new Map();
     const cmd = (...c) => { try { me.sock && me.sock.write(JSON.stringify({ command: c }) + '\n'); } catch {} };
     const ask = (prop) => new Promise(res => { const id = ++rid; pending.set(id, res); try { me.sock.write(JSON.stringify({ command: ['get_property', prop], request_id: id }) + '\n'); } catch { res(null); } setTimeout(() => { if (pending.delete(id)) res(null); }, 1500); });
+    // Fallback-ondertitel: pas SUB_DELAY ms na het laden opnieuw kijken. Zit er dan nog steeds geen Nederlandse
+    // ondertitel in (of naast) de stream, dan vraagt de app er een aan bij OpenSubtitles.
+    const SUB_DELAY = 6000;
+    const checkSub = async (forIdx) => {
+      if (me.quit || mpv !== me || idx !== forIdx || !me.sock) return;
+      const tl = await ask('track-list');
+      if (!Array.isArray(tl)) return;
+      const subs = tl.filter(t => t.type === 'sub');
+      if (subs.some(t => RE_NLCODE.test(t.lang || '') || /dutch|nederl/i.test(t.title || ''))) return;   // NL aanwezig (ook een eerder toegevoegde)
+      send({ type: 'needSub', idx: forIdx, other: subs.some(t => !t.external) });
+    };
     const onLoaded = async () => {
       // hervatten waar je was gebleven
       const st = +starts[idx] || 0; if (st > 20 && !o.live) cmd('seek', st, 'absolute');
@@ -175,12 +186,7 @@ ipcMain.handle('kd:mpvPlay', async (e, o) => {
       const al = await ask('current-tracks/audio/lang');
       const nlAudio = typeof al === 'string' && RE_NLCODE.test(al);
       if (nlAudio) cmd('set_property', 'sid', 'no');
-      else if (!o.live) {
-        // geen Nederlandse ondertitel in de stream → app haalt die op (ook als er al een Engelse is)
-        const tl = await ask('track-list');
-        const subs = Array.isArray(tl) ? tl.filter(t => t.type === 'sub' && !t.external) : [];
-        if (!subs.some(t => RE_NLCODE.test(t.lang || '') || /dutch|nederl/i.test(t.title || ''))) send({ type: 'needSub', idx, other: subs.length > 0 });
-      }
+      else if (!o.live) setTimeout(() => checkSub(idx), SUB_DELAY);   // fallback: pas na een tijdje, de eigen sporen van de stream gaan voor
       cmd('show-text', 'Audio: ${current-tracks/audio/lang} ${current-tracks/audio/title}  |  Ondertitel: ${current-tracks/sub/lang} ${current-tracks/sub/title}   (a = audio, s = ondertitel, t = lijst)', 5000);
     };
     let tries = 0;
@@ -212,7 +218,21 @@ ipcMain.handle('kd:mpvPlay', async (e, o) => {
     setTimeout(connect, 300);
   });
 });
-ipcMain.handle('kd:mpvSub', (_e, url) => { try { mpv && mpv.sock && mpv.sock.write(JSON.stringify({ command: ['sub-add', url, 'select', 'Nederlands (OpenSubtitles)', 'nl'] }) + '\n'); return true; } catch { return false; } });
+ipcMain.handle('kd:mpvSub', async (_e, url, lang) => {
+  try {
+    if (!mpv || !mpv.sock) return false;
+    let target = url;
+    if (/^https?:/i.test(url)) {   // eerst naar een tijdelijk bestand: betrouwbaarder dan mpv zelf laten downloaden
+      const r = await fetch(url, { headers: { 'User-Agent': 'Kijkdoos v1.2' } });
+      if (!r.ok) return false;
+      target = path.join(os.tmpdir(), 'kijkdoos', 'sub-' + Date.now() + '.srt');
+      fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, Buffer.from(await r.arrayBuffer()));
+    }
+    const l = lang === 'en' ? 'en' : 'nl';
+    mpv.sock.write(JSON.stringify({ command: ['sub-add', target, 'select', (l === 'nl' ? 'Nederlands' : 'English') + ' (OpenSubtitles)', l] }) + '\n');
+    return true;
+  } catch { return false; }
+});
 ipcMain.handle('kd:mpvStop', () => { mpvQuit(); return true; });
 
 // ---------- Downloads (offline kijken) ----------

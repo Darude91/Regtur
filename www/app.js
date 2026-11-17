@@ -1397,12 +1397,17 @@ async function osCall(path, body) {
 async function osFind(it, se, langs) {
   const title = cleanTitle(it.title);
   for (const lang of (langs || ['nl', 'en'])) {
-    const q = new URLSearchParams({ query: title, languages: lang, order_by: 'download_count', order_direction: 'desc', ai_translated: 'exclude', hearing_impaired: 'exclude' });
-    if (se && se.season != null) { q.set('type', 'episode'); q.set('season_number', se.season); q.set('episode_number', se.ep); }
-    else { q.set('type', 'movie'); if (it.year) q.set('year', it.year); }
-    const j = await osCall('/subtitles?' + q.toString());
-    const hit = (j.data || []).find(d => d.attributes && d.attributes.files && d.attributes.files[0]);
-    if (hit) return { fileId: hit.attributes.files[0].file_id, lang };
+    // ronde 1: strikt (met jaar, geen slechthorenden); ronde 2: ook slechthorenden; ronde 3 (films): ook zonder jaar (jaar in de lijst klopt vaak niet)
+    const rounds = se && se.season != null ? [0, 1] : [0, 1, 2];
+    for (const rnd of rounds) {
+      const q = new URLSearchParams({ query: title, languages: lang, order_by: 'download_count', order_direction: 'desc', ai_translated: 'exclude', foreign_parts_only: 'exclude' });
+      if (rnd === 0) q.set('hearing_impaired', 'exclude');
+      if (se && se.season != null) { q.set('type', 'episode'); q.set('season_number', se.season); q.set('episode_number', se.ep); }
+      else { q.set('type', 'movie'); if (it.year && rnd < 2) q.set('year', it.year); }
+      const j = await osCall('/subtitles?' + q.toString());
+      const hit = (j.data || []).find(d => d.attributes && d.attributes.files && d.attributes.files[0]);
+      if (hit) return { fileId: hit.attributes.files[0].file_id, lang };
+    }
   }
   return null;
 }
@@ -1690,14 +1695,14 @@ if (ENV.electron && window.kdNative && window.kdNative.mpvAvailable) {
     if (m.type === 'pos' && x && !mpvList.live && m.pos > 0) savePos(x.key, m.pos, m.dur);
     else if (m.type === 'eof' && x && !mpvList.live) clearPos(x.key);
     else if (m.type === 'item' && mpvList[m.idx]) { toast('Volgende: ' + mpvList[m.idx].title, 3000); if (mpvList.it) noteWatched(mpvList.it); }
-    else if (m.type === 'needSub') mpvNeedSub(m, window.kdNative.mpvSub);
+    else if (m.type === 'needSub') mpvNeedSub(m, (u, lang) => window.kdNative.mpvSub(u, lang));
     else if (m.type === 'closed') { mpvList = null; refreshHist(); }
   });
 } else if (ENV.cap && mpvPluginOf()) {
   try {
     mpvPlug = mpvPluginOf();
     mpvPlug.available().then(r => { mpvOk = !!(r && r.ok); }).catch(() => {});
-    mpvPlug.addListener('needSub', m => mpvNeedSub(m, u => mpvPlug.addSub({ url: u })));
+    mpvPlug.addListener('needSub', m => mpvNeedSub(m, (u, lang) => mpvPlug.addSub({ url: u, lang })));
   } catch {}
 }
 /** mpv/libmpv meldt: geen Nederlandse ondertitel in de stream -> ophalen bij OpenSubtitles en toevoegen */
@@ -1705,7 +1710,7 @@ async function mpvNeedSub(m, add) {
   const x = mpvList && mpvList[m.idx]; if (!x || !mpvList.it || mpvList.live) return;
   try {
     const r = await osGet(mpvList.it, epInfo(mpvList.eps, x.key), 'srt', true, m.other ? ['nl'] : ['nl', 'en']);
-    if (r && r.link) { await add(r.link); toast('Ondertitel (OpenSubtitles): ' + (r.lang === 'nl' ? 'Nederlands' : 'English'), 2500); }
+    if (r && r.link) { await add(r.link, r.lang); toast('Ondertitel (OpenSubtitles): ' + (r.lang === 'nl' ? 'Nederlands' : 'English'), 2500); }
   } catch (e) { osError(e); }
 }
 let mpvSkip = false;

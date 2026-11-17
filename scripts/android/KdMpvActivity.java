@@ -78,11 +78,30 @@ public class KdMpvActivity extends Activity implements SurfaceHolder.Callback {
 
     public static boolean available() { return Mpv.load(); }
 
-    /** Ondertitel (URL) toevoegen terwijl er wordt afgespeeld. */
-    public static boolean addSub(String url) {
-        KdMpvActivity a = current;
+    /** Ondertitel (URL) toevoegen terwijl er wordt afgespeeld: eerst naar een cache-bestand, dan sub-add. */
+    public static boolean addSub(final String url, final String lang) {
+        final KdMpvActivity a = current;
         if (a == null || !a.ready) return false;
-        Mpv.cmd("sub-add", url, "select", "Nederlands (OpenSubtitles)", "nl");
+        final boolean en = "en".equals(lang);
+        new Thread(() -> {
+            String target = url;
+            try {
+                if (url.startsWith("http")) {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                    c.setConnectTimeout(10000); c.setReadTimeout(15000); c.setRequestProperty("User-Agent", "Kijkdoos v1.2");
+                    if (c.getResponseCode() / 100 == 2) {
+                        java.io.File f = new java.io.File(a.getCacheDir(), "sub-" + System.currentTimeMillis() + ".srt");
+                        try (java.io.InputStream in = c.getInputStream(); java.io.FileOutputStream out = new java.io.FileOutputStream(f)) {
+                            byte[] buf = new byte[8192]; int n;
+                            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                        }
+                        target = f.getAbsolutePath();
+                    }
+                }
+            } catch (Throwable ignored) { /* dan laat mpv de URL zelf proberen */ }
+            final String t = target;
+            a.h.post(() -> { if (current == a) Mpv.cmd("sub-add", t, "select", en ? "English (OpenSubtitles)" : "Nederlands (OpenSubtitles)", en ? "en" : "nl"); });
+        }).start();
         return true;
     }
 
@@ -365,9 +384,27 @@ public class KdMpvActivity extends Activity implements SurfaceHolder.Callback {
             if ("sub".equals(type)) { if (!"yes".equals(Mpv.str("track-list/" + i + "/external"))) { anySub = true; if (isNl(lang, title)) nlSub = true; } if (sel) subDesc = langName(lang); }
         }
         if (nlAudio) { Mpv.set("sid", "no"); subDesc = "uit"; }
-        else if (!live && !nlSub && listener != null) { try { listener.needSub(idx, anySub); } catch (Throwable ignored) { } }
+        else if (!live && !nlSub && listener != null) {
+            // Fallback: pas na een tijdje opnieuw kijken; de eigen sporen van de stream gaan altijd voor
+            final int forIdx = idx;
+            h.postDelayed(() -> checkSub(forIdx), 6000);
+        }
         tInfo.setText("Audio: " + audioDesc + "  |  Ondertitels: " + (subDesc.isEmpty() ? "uit" : subDesc) + "   — kies zelf via de knoppen");
         showBar();
+    }
+
+    /** Na de vertraging: zit er nu nog steeds geen Nederlandse ondertitel in (of naast) de stream? Dan vraagt de app er een. */
+    private void checkSub(int forIdx) {
+        if (isFinishing() || idx != forIdx || live || listener == null) return;
+        int n = 0; Double c = Mpv.dbl("track-list/count"); if (c != null) n = (int) Math.round(c);
+        boolean nlSub = false, anySub = false;
+        for (int i = 0; i < n; i++) {
+            if (!"sub".equals(Mpv.str("track-list/" + i + "/type"))) continue;
+            if (!"yes".equals(Mpv.str("track-list/" + i + "/external"))) anySub = true;
+            if (isNl(Mpv.str("track-list/" + i + "/lang"), Mpv.str("track-list/" + i + "/title"))) nlSub = true;
+        }
+        if (nlSub) return;
+        try { listener.needSub(forIdx, anySub); } catch (Throwable ignored) { }
     }
 
     // ---------- afsluiten ----------

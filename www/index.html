@@ -152,8 +152,8 @@
 
     <h3>Ondertitels (OpenSubtitles)</h3>
     <p class="hint">Heeft een stream zelf geen ondertitels, dan zoekt Kijkdoos Nederlands (anders Engels) bij <a href="https://www.opensubtitles.com/consumers" target="_blank" rel="noopener">opensubtitles.com</a>. Er zit al een standaardsleutel in; vul hier alleen iets in als je een eigen sleutel wilt gebruiken.</p>
-    <label class="toggle"><span style="flex:1">OpenSubtitles gebruiken<small>Staat standaard uit. "Laatste redmiddel" = alleen als de stream zelf geen NL/EN-ondertitels toont</small></span>
-      <select id="setOsMode" class="sel" style="width:auto;margin:0"><option value="off">Uit (aanbevolen)</option><option value="fallback">Laatste redmiddel</option></select></label>
+    <label class="toggle"><span style="flex:1">OpenSubtitles gebruiken<small>Fallback: alleen als de stream zelf geen Nederlandse ondertitel heeft, wordt die na enkele seconden alsnog opgehaald</small></span>
+      <select id="setOsMode" class="sel" style="width:auto;margin:0"><option value="fallback">Fallback (NL ophalen als die ontbreekt)</option><option value="off">Uit</option></select></label>
     <input id="setOsKey" placeholder="Eigen OpenSubtitles-sleutel (optioneel)" autocomplete="off">
 
     <h3>Gratis bronnen</h3>

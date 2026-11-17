@@ -14,7 +14,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import org.json.JSONArray;
 
-/** Ingebouwde speler (libmpv): { available }, play({urls,titles,starts,idx,kids,live}), addSub({url}) + event "needSub". */
+/** Ingebouwde speler (libmpv): { available }, play({urls,titles,starts,idx,kids,live}), addSub({url,lang}) + event "needSub". */
 @CapacitorPlugin(name = "KdMpv")
 public class MpvPlugin extends Plugin {
 
@@ -72,7 +72,7 @@ public class MpvPlugin extends Plugin {
     public void addSub(PluginCall call) {
         String url = call.getString("url");
         JSObject r = new JSObject();
-        r.put("ok", url != null && KdMpvActivity.addSub(url));
+        r.put("ok", url != null && KdMpvActivity.addSub(url, call.getString("lang", "nl")));
         call.resolve(r);
     }
 }
