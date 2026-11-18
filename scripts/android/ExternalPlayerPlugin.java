@@ -129,6 +129,16 @@ public class ExternalPlayerPlugin extends Plugin {
                 if (p.equals(getContext().getPackageName()) || pk.contains(p)) continue;
                 pk.add(p); names.add(String.valueOf(ri.loadLabel(pm)));
             }
+            // De resolver op sommige TV's geeft niets terug: voeg bekende spelers toe die wel geïnstalleerd zijn
+            for (String p : new String[]{ "org.videolan.vlc", "is.xyz.mpv", "com.mxtech.videoplayer.ad", "com.mxtech.videoplayer.pro", "com.brouken.player", "org.xbmc.kodi", "dev.anilbeesetti.nextplayer", "com.kmplayer", "ar.tvplayer.tv" }) {
+                if (pk.contains(p)) continue;
+                boolean there = installed(p);
+                try { if (!there && pm.getLeanbackLaunchIntentForPackage(p) != null) there = true; } catch (Throwable ignored) { }
+                if (!there) continue;
+                String label = p;
+                try { label = String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(p, 0))); } catch (Throwable ignored) { }
+                pk.add(p); names.add(label);
+            }
             if (pk.isEmpty() || getActivity() == null) return false;
             getActivity().runOnUiThread(() -> new android.app.AlertDialog.Builder(getActivity())
                 .setTitle("Afspelen met")

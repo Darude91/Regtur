@@ -10,8 +10,7 @@
     "web": "python3 proxy.py",
     "build:win": "electron-builder --win --publish never",
     "android:add": "cap add android",
-    "android:sync": "cap sync android",
-    "postinstall": "node scripts/update-hls.js"
+    "android:sync": "cap sync android"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
@@ -21,8 +20,7 @@
   "devDependencies": {
     "@capacitor/cli": "^7.0.0",
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8",
-    "hls.js": "^1.5.20"
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "nl.regtur.kijkdoos",

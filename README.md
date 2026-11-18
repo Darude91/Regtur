@@ -117,3 +117,8 @@ In de ingebouwde mpv-speler (Windows en Android) wordt de Nederlandse ondertitel
 - Beperking: de Android-WebView toont bij veel mkv/mp4-bestanden geen audiosporen; dan is de externe speler (↗) de betrouwbare keuze.
 - Externe speler op TV: bij "Vraag elke keer" toont de app nu een eigen keuzelijst (werkt met de afstandsbediening) en onthoudt je keuze.
 - Na elke app-update wist de APK de oude WebView-cache/service worker, zodat de TV geen verouderde versie (te grote kaarten, ontbrekende downloadknop) meer kan tonen.
+
+## Versie 25 — halve rollback
+- hls.js-update teruggedraaid (weer het meegeleverde bestand).
+- "Audiospoor automatisch kiezen" is een instelling; op Android standaard UIT (de stream kiest zelf, zoals eerst), elders aan. Na een handmatige keuze met 🔊 verandert de app het spoor nooit meer zelf.
+- Externe speler op Android: geen OpenSubtitles-wachttijd en geen extra ondertitel-extras meer bij het starten; de eigen spelerlijst bevat nu ook bekende, geïnstalleerde spelers (VLC, mpv, MX, Just Player, Kodi…) als de Android-resolver niets teruggeeft.

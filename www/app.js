@@ -64,6 +64,8 @@ state.settings.grid = Object.assign({ sort: 'pop', decade: '', rating: 0 }, stat
 if (!('omdbKey' in state.settings)) state.settings.omdbKey = '';
 if (!('osKey' in state.settings)) state.settings.osKey = '';
 if (!('builtin' in state.settings)) state.settings.builtin = 'mpv';
+// Automatisch audiospoor kiezen: op Android standaard UIT (de eigen keuze van de stream werkte daar betrouwbaarder), elders aan
+if (!('autoAudio' in state.settings)) state.settings.autoAudio = !ENV.cap;
 if (!('catchupExt' in state.settings)) state.settings.catchupExt = 'm3u8';
 // OpenSubtitles staat standaard UIT (kwam in de weg van de eigen audio/ondertitels van de stream); wie het wil kiest 'fallback' in ⚙
 if (!state.settings.osMigrated2) { state.settings.osMode = 'fallback'; state.settings.osMigrated = state.settings.osMigrated2 = true; }
@@ -1452,13 +1454,14 @@ function applyMediaPrefs(v, it) {
   let audio = 'unknown', audioSeen = false;
   if (hls && hls.audioTracks && hls.audioTracks.length) {
     audioSeen = true;
-    const i = hls.audioTracks.length > 1 ? pickByLang(hls.audioTracks, order) : -1;
+    const auto = state.settings.autoAudio && !(playCtx && playCtx.manualTracks);
+    const i = auto && hls.audioTracks.length > 1 ? pickByLang(hls.audioTracks, order) : -1;
     if (i >= 0 && hls.audioTrack !== i) hls.audioTrack = i;
     audio = langClass(hls.audioTracks[i >= 0 ? i : Math.max(0, hls.audioTrack)]);
   } else if (v.audioTracks && v.audioTracks.length) {
     audioSeen = true;
-    const at = [...v.audioTracks], i = at.length > 1 ? pickByLang(at, order) : -1;
-    if (i >= 0) at.forEach((t, n) => { t.enabled = n === i; });
+    const at = [...v.audioTracks], auto = state.settings.autoAudio && !(playCtx && playCtx.manualTracks), i = auto && at.length > 1 ? pickByLang(at, order) : -1;
+    if (i >= 0 && !at[i].enabled) at.forEach((t, n) => { t.enabled = n === i; });
     audio = langClass(at[i >= 0 ? i : Math.max(0, at.findIndex(t => t.enabled))]);
   }
   // ondertitels
@@ -1763,7 +1766,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
   const m = extMode(), list = extQueue(url, title, ctx);
   // ondertitel (NL, anders EN) voor de eerste titel, via OpenSubtitles; mag het starten niet te lang ophouden
   let subUrl = '';
-  if (ctx && ctx.it && !list.live && osKeyVal() && state.settings.osMode !== 'off' && !dutchOnlyItem(ctx.it) && (m === 'android' || (m === 'windows' && list.length === 1))) {
+  if (ctx && ctx.it && !list.live && osKeyVal() && state.settings.osMode !== 'off' && !dutchOnlyItem(ctx.it) && (m === 'windows' && list.length === 1)) {
     toast('Ondertitels zoeken…', 2000);
     try { const r = await Promise.race([osGet(ctx.it, epInfo(ctx.eps, list[0].url), 'srt'), new Promise(res => setTimeout(() => res(null), 9000))]); if (r && r.link) subUrl = r.link; }
     catch (e) { osError(e); }
@@ -1900,6 +1903,7 @@ function openTrackList() {
 }
 async function pickTrack(b) {
   const v = $('#video'), st = trackState(), i = +b.dataset.i, act = b.dataset.trk;
+  if (playCtx && (act === 'a' || act === 's')) playCtx.manualTracks = true;
   if (act === 'a') {
     if (st.kind === 'hls') hls.audioTrack = i; else st.audio.forEach((t, n) => { t.enabled = n === i; });
     toast('Audio: ' + trackLabel(st.audio[i], i), 1800);
@@ -2010,7 +2014,7 @@ function playAdjacent(d) {
 function renderSettings() {
   $('#setScan').checked = !!state.settings.scan; $('#setTV').value = state.settings.tvMode; $('#setTVScale').value = String(state.settings.tvScale);
   $('#setCache').checked = cacheOn(); $('#setCacheTTL').value = String(cacheTTL()); $('#setCacheTTL').disabled = !cacheOn();
-  $('#setOmdb').value = state.settings.omdbKey || ''; $('#setOsKey').value = state.settings.osKey || ''; $('#setCatchup').value = state.settings.catchupExt || 'm3u8'; $('#setOsMode').value = state.settings.osMode || 'fallback'; if ($('#setBuiltin')) $('#setBuiltin').value = state.settings.builtin || 'mpv';
+  $('#setOmdb').value = state.settings.omdbKey || ''; $('#setOsKey').value = state.settings.osKey || ''; $('#setCatchup').value = state.settings.catchupExt || 'm3u8'; $('#setOsMode').value = state.settings.osMode || 'fallback'; if ($('#setBuiltin')) $('#setBuiltin').value = state.settings.builtin || 'mpv'; if ($('#setAutoAudio')) $('#setAutoAudio').checked = !!state.settings.autoAudio;
   $('#setProxy').value = state.settings.proxy || '';
   const e = state.settings.ext, m = extMode();
   $('#setExtAlways').checked = !!e.always;
@@ -2040,6 +2044,7 @@ $('#settings').addEventListener('change', e => {
   if (t.id === 'setCache') { state.settings.cache.on = t.checked; saveSettings(); renderSettings(); if (!t.checked) { IDB.clear('http'); IDB.clear('avail'); IDB.clear('omdb'); } toast(t.checked ? 'Cache aan' : 'Cache uit en geleegd — alles realtime'); }
   if (t.id === 'setCacheTTL') { state.settings.cache.ttl = +t.value; saveSettings(); }
   if (t.id === 'setOsMode') { state.settings.osMode = t.value; saveSettings(); }
+  if (t.id === 'setAutoAudio') { state.settings.autoAudio = t.checked; saveSettings(); }
   if (t.id === 'setBuiltin') { state.settings.builtin = t.value; saveSettings(); }
   if (t.id === 'setCatchup') { state.settings.catchupExt = t.value; saveSettings(); }
   if (t.id === 'setOsKey') { state.settings.osKey = t.value.trim(); saveSettings(); }
