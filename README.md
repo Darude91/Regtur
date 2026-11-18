@@ -143,3 +143,9 @@ Android externe spelers (VLC/mpv/MX): na het starten is er geen verbinding meer 
 - De webspeler is alleen nog terugval (of kies ⚙ → Ingebouwde speler → Eenvoudig).
 - Live tv blijft standaard in de webspeler (zappen + programmagids); aan te zetten via ⚙ → "Live tv ook in mpv/mpvNova".
 - Audio/ondertitelvoorkeur stel je in mpv/mpvNova zelf in (`alang`/`slang` in mpv.conf); positie en volgende aflevering komen terug in Kijkdoos als de speler dat meldt.
+
+## Versie 30 — ondertitels die beter kloppen
+- **Zoeken op TMDB-id:** heeft je Xtream-aanbieder een TMDB-id bij de film/serie, dan zoekt Kijkdoos daarop (bij series op `parent_tmdb_id` + seizoen/aflevering) in plaats van op de titel. Dat voorkomt de verkeerde film of serie bij vertaalde titels, remakes en dubbele namen. Geen id, dan zoals voorheen op titel.
+- **Betere keuze tussen kandidaten:** naast moviehash-match, betrouwbare uploader en waardering telt nu ook of de uitgave (BluRay/WEB-DL/HDTV, 1080p/720p) lijkt op de stream; machine- en AI-vertalingen en slechthorenden-versies gaan omlaag.
+- **Handmatig wisselen:** in de ingebouwde speler (🔊) staat na het zoeken **🔁 Andere … ondertitel proberen (1/8)**; dat laadt de volgende kandidaat. Samen met ± 0,5 s verschuiven kun je zo een afwijkende uitgave rechtzetten.
+- Geldt voor de webspeler en mpv op Windows (automatisch: de beste kandidaat). In mpv/mpvNova op Android kan Kijkdoos geen ondertitel toevoegen.
