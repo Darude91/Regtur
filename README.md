@@ -1,7 +1,6 @@
 # 📺 Kijkdoos — IPTV voor Android, Windows en web
 
 Gratis films, series en live tv op één plek, plus je eigen IPTV-abonnementen.
-Alleen streams die echt werken worden getoond; de rest blijft verborgen (aan te zetten via ⚙).
 
 **Downloads (Android .apk / Windows .exe):** [Releases → latest](https://github.com/Darude91/Regtur/releases/latest)
 
@@ -13,7 +12,6 @@ Alleen streams die echt werken worden getoond; de rest blijft verborgen (aan te 
 - **Abonnementen:** Xtream Codes (server + gebruikersnaam + wachtwoord) of een M3U-link.
   Films, series (met seizoenen/afleveringen) en zenders worden automatisch ingedeeld.
   Een verlopen of niet-werkend abonnement toont niets.
-- **Beschikbaarheidscheck:** elke stream wordt op de achtergrond getest; resultaten worden 6 uur onthouden.
 - Zoeken, detailpagina's, automatisch volgende aflevering, "Kopieer link" voor VLC.
 
 ## Installeren
@@ -149,3 +147,17 @@ Android externe spelers (VLC/mpv/MX): na het starten is er geen verbinding meer 
 - **Betere keuze tussen kandidaten:** naast moviehash-match, betrouwbare uploader en waardering telt nu ook of de uitgave (BluRay/WEB-DL/HDTV, 1080p/720p) lijkt op de stream; machine- en AI-vertalingen en slechthorenden-versies gaan omlaag.
 - **Handmatig wisselen:** in de ingebouwde speler (🔊) staat na het zoeken **🔁 Andere … ondertitel proberen (1/8)**; dat laadt de volgende kandidaat. Samen met ± 0,5 s verschuiven kun je zo een afwijkende uitgave rechtzetten.
 - Geldt voor de webspeler en mpv op Windows (automatisch: de beste kandidaat). In mpv/mpvNova op Android kan Kijkdoos geen ondertitel toevoegen.
+
+## Versie 31 — favorieten, streamcontrole verwijderd
+- **Verwijderd:** de instelling "Streams controleren" (en alles wat erbij hoorde: achtergrondtests, "controleren…"-label, verbergen van kapotte streams). Alles uit de index wordt gewoon getoond. Alleen als afspelen echt mislukt, onthoudt de app dat even voor het zappen (die zender wordt overgeslagen).
+- **Nieuw: ★ Favorieten.** Eigen tabblad met je favoriete films, series en zenders (alleen op dit apparaat bewaard).
+  - Toevoegen: ☆ rechtsonder op een kaart (muis/aanraking), de knop **☆ Favoriet** in het detailscherm, of in de speler 🔊-menu → **☆ Aan favorieten toevoegen** (werkt met de afstandsbediening, ook voor live tv).
+  - Favoriete zenders zappen als groep: start er één, dan zap je met ▲/▼ door je favorieten.
+
+## Versie 32 — afspelen op een ander apparaat (telefoon → tv/pc)
+Naast Google Cast (alleen Chromecast/Google TV, alleen mp4/m3u8) kan Kijkdoos nu een titel sturen naar een **andere Kijkdoos**: de tv of pc speelt hem zelf af, met jouw speler (Android TV: mpvNova; Windows: mpv), dus ook mkv/ts.
+- **Ontvanger (tv of pc):** ⚙ → *Ontvanger* aanzetten. Je ziet daar de koppelcode (4 cijfers) en het IP-adres. Kijkdoos moet open staan op dat apparaat.
+- **Zender (telefoon of pc):** tik op 📺 bij een film, aflevering of zender → kies het apparaat. Eerste keer: *Apparaten zoeken in je netwerk* (of IP-adres handmatig) en de koppelcode invullen; daarna staat het apparaat in de lijst.
+- Doorgegeven worden: stream, titel, hervatpositie en bij series de volgende afleveringen (de ontvanger gaat zelf door).
+- Techniek: HTTP op poort 8765 in het lokale netwerk (`/kd/info`, `/kd/play`), alleen met de koppelcode (`X-KD-Code`), maximaal 8 foute pogingen per minuut, alleen http(s)-streams. `KdRemotePlugin.java` (Android), `electron/remote.js` (Windows).
+- Let op: de stream-URL (bij Xtream met je inloggegevens) gaat onversleuteld over je eigen netwerk. Gebruik dit alleen op een netwerk dat je vertrouwt. Afstandsbediening vanaf de telefoon (pauze/seek) zit er niet in; de ontvanger bedien je met zijn eigen afstandsbediening.
