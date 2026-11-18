@@ -111,3 +111,9 @@ De Android-build zoekt tijdens de build `dev.jdtech.mpv:libmpv` op Maven Central
 Zit er in de stream geen Nederlandse ondertitel (en is de audio niet Nederlands), dan haalt de app er altijd een bij OpenSubtitles — ook als er al een Engelse in de stream zit. Is er helemaal geen ondertitel, dan eerst Nederlands, anders Engels. Geldt voor de browserspeler, mpv op Windows en mpv op Android. Instelling: ⚙ → OpenSubtitles.
 
 In de ingebouwde mpv-speler (Windows en Android) wordt de Nederlandse ondertitel pas ~6 seconden na het laden opgehaald, en alleen als er dan nog steeds geen Nederlandse ondertitel in de stream zit (fallback; de eigen sporen gaan altijd voor). Het bestand wordt eerst lokaal opgeslagen en daarna aan mpv toegevoegd. Zoeken doet eerst strikt (zonder SDH, met jaar), daarna ruimer.
+
+## Versie 24 — Android TV + webspeler
+- Android gebruikt weer de ingebouwde webspeler (geen libmpv meer). Nieuw: knop 🔊 in de speler (op TV: pijl omhoog/omlaag of Menu-toets; op toetsenbord a/s) om handmatig een audiospoor of ondertitel te kiezen, Nederlandse/Engelse ondertitel te zoeken, of de stream in een externe speler te openen. hls.js wordt tijdens de build bijgewerkt naar de nieuwste 1.x.
+- Beperking: de Android-WebView toont bij veel mkv/mp4-bestanden geen audiosporen; dan is de externe speler (↗) de betrouwbare keuze.
+- Externe speler op TV: bij "Vraag elke keer" toont de app nu een eigen keuzelijst (werkt met de afstandsbediening) en onthoudt je keuze.
+- Na elke app-update wist de APK de oude WebView-cache/service worker, zodat de TV geen verouderde versie (te grote kaarten, ontbrekende downloadknop) meer kan tonen.

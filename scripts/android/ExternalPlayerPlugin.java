@@ -47,6 +47,7 @@ public class ExternalPlayerPlugin extends Plugin {
         String title = call.getString("title", "");
         String pkg = call.getString("package", "");
         if (pkg == null) pkg = "";
+        if (pkg.isEmpty() && pickPlayer(call)) return;   // eigen keuzelijst (werkt ook met afstandsbediening op Android TV)
 
         Intent i = new Intent(Intent.ACTION_VIEW);
         i.putExtra("title", title);
@@ -114,6 +115,28 @@ public class ExternalPlayerPlugin extends Plugin {
         }
         if (!pkg.isEmpty() && !installed(pkg)) call.reject("niet geïnstalleerd", "NOT_INSTALLED");
         else call.reject("speler wil deze stream niet openen", "OPEN_FAILED");
+    }
+
+    /** Eigen spelerkeuze: de standaard Android-kiezer ontbreekt of werkt niet op veel TV's. Geeft true terug als de lijst getoond wordt. */
+    private boolean pickPlayer(final PluginCall call) {
+        try {
+            Intent probe = new Intent(Intent.ACTION_VIEW);
+            probe.setDataAndType(Uri.parse(call.getString("url")), "video/*");
+            android.content.pm.PackageManager pm = getContext().getPackageManager();
+            final java.util.List<String> pk = new java.util.ArrayList<>(), names = new java.util.ArrayList<>();
+            for (android.content.pm.ResolveInfo ri : pm.queryIntentActivities(probe, 0)) {
+                String p = ri.activityInfo.packageName;
+                if (p.equals(getContext().getPackageName()) || pk.contains(p)) continue;
+                pk.add(p); names.add(String.valueOf(ri.loadLabel(pm)));
+            }
+            if (pk.isEmpty() || getActivity() == null) return false;
+            getActivity().runOnUiThread(() -> new android.app.AlertDialog.Builder(getActivity())
+                .setTitle("Afspelen met")
+                .setItems(names.toArray(new String[0]), (d, w) -> { call.getData().put("package", pk.get(w)); open(call); })
+                .setOnCancelListener(d -> call.reject("geannuleerd", "CANCELLED"))
+                .show());
+            return true;
+        } catch (Throwable t) { return false; }
     }
 
     /** Lokale (gedownloade) bestanden gaan via FileProvider naar de speler; streams blijven gewone URL's. */
@@ -269,6 +292,7 @@ public class ExternalPlayerPlugin extends Plugin {
         JSArray urls = call.getArray("urls");
         String pkg = call.getString("package", "");
         boolean playlist = pkg != null && pkg.startsWith("com.mxtech.videoplayer") && urls != null && urls.length() > 1;
+        ret.put("package", pkg == null ? "" : pkg);
         ret.put("completed", completed);
         ret.put("known", known);
         ret.put("playlist", playlist);

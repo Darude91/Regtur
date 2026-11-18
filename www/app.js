@@ -1698,7 +1698,7 @@ if (ENV.electron && window.kdNative && window.kdNative.mpvAvailable) {
     else if (m.type === 'needSub') mpvNeedSub(m, (u, lang) => window.kdNative.mpvSub(u, lang));
     else if (m.type === 'closed') { mpvList = null; refreshHist(); }
   });
-} else if (ENV.cap && mpvPluginOf()) {
+} else if (false) {
   try {
     mpvPlug = mpvPluginOf();
     mpvPlug.available().then(r => { mpvOk = !!(r && r.ok); }).catch(() => {});
@@ -1779,6 +1779,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
         const start = live || (fromStart && i === 0) ? 0 : getPos(list[i].url);
         const r = await plug.open({ url: dlExt(list[i].url), title: list[i].title, package: pkg, urls: list.slice(i).map(x => dlExt(x.url)), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '' });
         // onthoud waar je gestopt bent (bij een afspeellijst in de speler zelf weten we niet welk item het was)
+        if (r.package && state.settings.ext.app === 'chooser') { state.settings.ext.app = 'custom'; state.settings.ext.pkg = r.package; saveSettings(); toast('Speler onthouden — wijzigen kan in ⚙ Instellingen', 3500); }
         if (!live && (!r.playlist || list.length === 1) && r.position > 0) { if (r.completed) clearPos(list[i].url); else savePos(list[i].url, r.position / 1000, r.duration > 0 ? r.duration / 1000 : 0); }
         if (list.length < 2 || r.playlist || list.live) break;                 // speler regelt het zelf / geen serie
         if (r.completed) { i++; if (i < list.length) toast('Volgende: ' + list[i].title, 3000); continue; }
@@ -1788,6 +1789,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       }
     } catch (e) {
       const code = (e && e.code) || '';
+      if (code === 'CANCELLED') return;
       if (pkg && code === 'NOT_INSTALLED') {
         if (confirm(`${extName()} is niet geïnstalleerd. Openen in de Play Store?`)) plug.openStore({ package: pkg }).catch(() => {});
       } else if (pkg && code === 'OPEN_FAILED') {
@@ -1863,6 +1865,69 @@ function zapTo(d, toIndex) {
   play(c.url, c.title, c, null, null, z);
   return true;
 }
+
+// ---------- Handmatig audiospoor / ondertitel kiezen (ingebouwde speler) ----------
+function trackLabel(t, i) {
+  const n = [t.name, t.label].find(x => typeof x === 'string' && x.trim());
+  const l = t.lang || t.language;
+  const lc = langClass(t), lname = lc === 'nl' ? 'Nederlands' : lc === 'en' ? 'English' : (l && !/^(und|unk)/i.test(l) ? l : '');
+  return [lname, n && n !== lname ? n : ''].filter(Boolean).join(' - ') || ('Spoor ' + (i + 1));
+}
+function trackState() {
+  const v = $('#video');
+  const out = { audio: [], aSel: -1, subs: [], sSel: -1, kind: '' };
+  if (hls && hls.audioTracks && hls.audioTracks.length) { out.kind = 'hls'; out.audio = [...hls.audioTracks]; out.aSel = hls.audioTrack; }
+  else if (v.audioTracks && v.audioTracks.length) { out.kind = 'native'; out.audio = [...v.audioTracks]; out.aSel = out.audio.findIndex(t => t.enabled); }
+  if (hls && hls.subtitleTracks && hls.subtitleTracks.length) { out.subs = [...hls.subtitleTracks]; out.sSel = hls.subtitleDisplay === false ? -1 : hls.subtitleTrack; out.sKind = 'hls'; }
+  else { out.subs = textTracksOf(v); out.sSel = out.subs.findIndex(t => t.mode === 'showing'); out.sKind = 'native'; }
+  return out;
+}
+function openTrackList() {
+  if (!playCtx) return;
+  const st = trackState(), box = $('#pList');
+  const row = (act, i, label, cur) => `<button class="zi${cur ? ' cur' : ''}" data-trk="${act}" data-i="${i}"><span class="zt">${cur ? '✓ ' : ''}${esc(label)}</span></button>`;
+  let h = '<div class="pl-head">Audio</div>';
+  h += st.audio.length ? st.audio.map((t, i) => row('a', i, trackLabel(t, i), i === st.aSel)).join('')
+    : '<div class="pl-note">Deze stream laat de ingebouwde speler geen audiosporen zien. Open hem in een externe speler (↗) om een ander audiospoor te kiezen.</div>';
+  h += '<div class="pl-head">Ondertitels</div>' + row('s', -1, 'Uit', st.sSel < 0) + st.subs.map((t, i) => row('s', i, trackLabel(t, i), i === st.sSel)).join('');
+  if (osKeyVal() && playCtx.it && playCtx.it.kind !== 'live' && playCtx.it.kind !== 'catchup') {
+    h += row('os', 0, '🔎 Nederlandse ondertitel zoeken (OpenSubtitles)', false) + row('os', 1, '🔎 Engelse ondertitel zoeken (OpenSubtitles)', false);
+  }
+  if (!st.audio.length || !st.subs.length) h += row('ext', 0, '↗ Openen in ' + extName() + ' (alle sporen)', false);
+  box.innerHTML = h; box.hidden = false; poke();
+  const cur = $('.cur', box) || $('.zi', box);
+  if (cur) { cur.focus({ preventScroll: true }); cur.scrollIntoView({ block: 'center' }); }
+}
+async function pickTrack(b) {
+  const v = $('#video'), st = trackState(), i = +b.dataset.i, act = b.dataset.trk;
+  if (act === 'a') {
+    if (st.kind === 'hls') hls.audioTrack = i; else st.audio.forEach((t, n) => { t.enabled = n === i; });
+    toast('Audio: ' + trackLabel(st.audio[i], i), 1800);
+  } else if (act === 's') {
+    if (st.sKind === 'hls') { if (i < 0) hls.subtitleTrack = -1; else { hls.subtitleTrack = i; hls.subtitleDisplay = true; } }
+    else st.subs.forEach((t, n) => { t.mode = n === i ? 'showing' : 'disabled'; });
+    toast(i < 0 ? 'Ondertitels uit' : 'Ondertitel: ' + trackLabel(st.subs[i], i), 1800);
+  } else if (act === 'os') {
+    const lang = i === 0 ? 'nl' : 'en';
+    toast('Ondertitel zoeken…', 2500);
+    try {
+      const r = await osGet(playCtx.it, epInfo(playCtx.eps, playCtx.cur), 'webvtt', true, [lang]);
+      if (!r || !r.text) { toast('Geen ' + (lang === 'nl' ? 'Nederlandse' : 'Engelse') + ' ondertitel gevonden', 2500); return; }
+      const tr = document.createElement('track');
+      tr.kind = 'subtitles'; tr.label = lang === 'nl' ? 'Nederlands (OpenSubtitles)' : 'English (OpenSubtitles)'; tr.srclang = lang;
+      tr.src = URL.createObjectURL(new Blob([r.text], { type: 'text/vtt' }));
+      v.querySelectorAll('track').forEach(t => t.remove());
+      if (hls && hls.subtitleTracks && hls.subtitleTracks.length) hls.subtitleTrack = -1;
+      textTracksOf(v).forEach(t => { t.mode = 'disabled'; });
+      v.appendChild(tr); tr.track.__os = true; tr.track.mode = 'showing'; tr.default = true;
+      toast('Ondertitel geladen', 1800);
+    } catch (e) { osError(e); toast('Ondertitel ophalen mislukt', 2500); }
+  } else if (act === 'ext') {
+    const t = $('#pTitle').textContent, c = playCtx && playCtx.it ? { it: playCtx.it, eps: playCtx.eps, cur: playCtx.cur, zap: playCtx.zap } : null;
+    const url = playCtx.cur; stopPlayback(); openExternal(url, t, c); return;
+  }
+  openTrackList();
+}
 function openZapList() {
   const z = playCtx && playCtx.zap; if (!z) return;
   const box = $('#pList');
@@ -1875,10 +1940,12 @@ function openZapList() {
 function closeZapList(refocus = true) { $('#pList').hidden = true; if (refocus && isTV()) $('#player').focus(); }
 $('#pList').addEventListener('click', e => {
   const b = e.target.closest('.zi'); if (!b) return;
+  if (b.dataset.trk) { pickTrack(b); return; }
   closeZapList(); zapTo(0, +b.dataset.i);
 });
 $('#pPrev').onclick = () => zapTo(-1);
 $('#pNext').onclick = () => zapTo(1);
+$('#pTracks').onclick = () => ($('#pList').hidden ? openTrackList() : closeZapList(false));
 $('#pChan').onclick = () => ($('#pList').hidden ? openZapList() : closeZapList(false));
 let digitBuf = '', digitT = null;
 function zapDigit(dg) {
@@ -1913,6 +1980,7 @@ function playerKey(e, tv) {
   switch (e.key) {
     case 'ChannelUp': case 'PageUp': case 'MediaTrackNext': if (z) zapTo(1); else if (e.key === 'MediaTrackNext') playAdjacent(1); else return false; break;
     case 'ChannelDown': case 'PageDown': case 'MediaTrackPrevious': if (z) zapTo(-1); else if (e.key === 'MediaTrackPrevious') playAdjacent(-1); else return false; break;
+    case 'a': case 'A': case 's': case 'S': case 'Menu': case 'ContextMenu': case 'ColorF1Green': openTrackList(); break;
     case 'g': case 'G': case 'Guide': case 'Info': case 'ColorF2Yellow': if (playCtx && playCtx.it && playCtx.it.xid != null) openEpg(playCtx.it); else return false; break;
     case 'MediaPlayPause': v.paused ? v.play().catch(() => {}) : v.pause(); break;
     case 'MediaPlay': v.play().catch(() => {}); break;
@@ -1920,8 +1988,8 @@ function playerKey(e, tv) {
     default:
       if (!tv) return false;
       switch (e.key) {
-        case 'ArrowUp': if (z) zapTo(1); break;
-        case 'ArrowDown': if (z) zapTo(-1); break;
+        case 'ArrowUp': if (z) zapTo(1); else openTrackList(); break;
+        case 'ArrowDown': if (z) zapTo(-1); else openTrackList(); break;
         case 'Enter': case ' ': if (z) openZapList(); else v.paused ? v.play().catch(() => {}) : v.pause(); break;
         case 'ArrowLeft': case 'MediaRewind': if (z) openZapList(); else seek(-10); break;
         case 'ArrowRight': case 'MediaFastForward': if (z) openZapList(); else seek(10); break;

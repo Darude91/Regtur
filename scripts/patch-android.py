@@ -61,28 +61,6 @@ if 'OPTIONS_PROVIDER_CLASS_NAME' not in s:
     s = s.replace('</application>', meta + '    </application>', 1)
     manifest.write_text(s, encoding='utf8')
 
-# Ingebouwde speler (libmpv): alleen als de workflow de bibliotheek heeft gevonden (MPV_COORD, bijv. dev.jdtech.mpv:libmpv:0.5.1)
-mpv_coord = os.environ.get('MPV_COORD', '').strip()
-g = gradle.read_text(encoding='utf8')
-if mpv_coord and mpv_coord not in g:
-    g = g.replace('dependencies {', "dependencies {\n    implementation '" + mpv_coord + "'", 1)
-    gradle.write_text(g, encoding='utf8')
-    var = root / 'variables.gradle'
-    if var.exists():
-        v = var.read_text(encoding='utf8')
-        v = re.sub(r'minSdkVersion\s*=\s*\d+', 'minSdkVersion = 26', v)
-        var.write_text(v, encoding='utf8')
-    print('libmpv-dependency toegevoegd:', mpv_coord)
-elif not mpv_coord:
-    print('libmpv niet beschikbaar: ingebouwde speler valt terug op de browserspeler')
-s = manifest.read_text(encoding='utf8')
-if 'KdMpvActivity' not in s:
-    act = ('        <activity android:name="' + app_id + '.KdMpvActivity" android:exported="false" '
-           'android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode|navigation|keyboard" '
-           'android:launchMode="singleTop" android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />\n')
-    s = s.replace('</application>', act + '    </application>', 1)
-    manifest.write_text(s, encoding='utf8')
-
 # Gedownloade bestanden (app-map op de opslag) delen met externe spelers via de FileProvider van Capacitor
 xml = res / 'xml'; xml.mkdir(parents=True, exist_ok=True)
 (xml / 'file_paths.xml').write_text('''<?xml version="1.0" encoding="utf-8"?>
@@ -116,6 +94,6 @@ subprocess.run(['convert', '-size', '320x180', 'xc:#0b0d14', '(', str(icon), '-r
 src = pathlib.Path(__file__).parent / 'android'
 jdir = root / 'app/src/main/java' / pathlib.Path(*app_id.split('.'))
 jdir.mkdir(parents=True, exist_ok=True)
-for name in ('ExternalPlayerPlugin.java', 'CastPlugin.java', 'CastOptionsProvider.java', 'MpvPlugin.java', 'KdMpvActivity.java', 'MainActivity.java'):
+for name in ('ExternalPlayerPlugin.java', 'CastPlugin.java', 'CastOptionsProvider.java', 'MainActivity.java'):
     (jdir / name).write_text((src / name).read_text(encoding='utf8').replace('__PKG__', app_id), encoding='utf8')
 print('Android TV-patch + externe-speler-plugin toegepast')
