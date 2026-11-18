@@ -1500,6 +1500,7 @@ function osForPlayer(v, it, key) {
   setTimeout(async () => {
     if (!playCtx || playCtx.key !== key) return;
     let mp; try { mp = applyMediaPrefs(v, it); } catch { mp = playCtx.mp || { audio: 'unknown', subs: 0 }; }
+    if (playCtx.manualTracks) return;                                     // zelf gekozen via 🔊
     if (mp.nlSubs > 0) return;                                            // de stream heeft zelf een Nederlandse ondertitel
     if (mp.audio === 'nl') return;                                        // Nederlandse audio
     if (mp.audio === 'unknown' && dutchOnlyItem(it)) return;               // niets bekend, categorie is Nederlands
@@ -1516,7 +1517,7 @@ function osForPlayer(v, it, key) {
       v.appendChild(tr); tr.track.__os = true; tr.track.mode = 'showing'; tr.default = true;
       toast('Ondertitels (OpenSubtitles): ' + tr.label, 2500);
     } catch (e) { osError(e); }
-  }, 9000);
+  }, 8000);   // pas na ~8 s: de eigen sporen van de stream gaan voor
 }
 function fail(it, url, text) {
   const msg = $('#pMsg'); msg.hidden = false;
@@ -1766,7 +1767,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
   const m = extMode(), list = extQueue(url, title, ctx);
   // ondertitel (NL, anders EN) voor de eerste titel, via OpenSubtitles; mag het starten niet te lang ophouden
   let subUrl = '';
-  if (ctx && ctx.it && !list.live && osKeyVal() && state.settings.osMode !== 'off' && !dutchOnlyItem(ctx.it) && (m === 'windows' && list.length === 1)) {
+  if (ctx && ctx.it && !list.live && osKeyVal() && state.settings.osMode !== 'off' && !dutchOnlyItem(ctx.it) && false) {
     toast('Ondertitels zoeken…', 2000);
     try { const r = await Promise.race([osGet(ctx.it, epInfo(ctx.eps, list[0].url), 'srt'), new Promise(res => setTimeout(() => res(null), 9000))]); if (r && r.link) subUrl = r.link; }
     catch (e) { osError(e); }
@@ -1816,6 +1817,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       if (found.length) { path = state.settings.ext.winPath = found[0].path; saveSettings(); }
     }
     if (!path) { toast('Kies eerst een externe speler bij ⚙ Instellingen'); renderSettings(); $('#settings').hidden = false; return; }
+    if (ctx && ctx.it && !list.live && ctx.it.kind !== 'live') { mpvList = list.map(x => ({ key: x.url, title: x.title })); mpvList.eps = ctx.eps; mpvList.it = ctx.it; mpvList.live = false; }
     const r = await window.kdNative.openPlayer({ path, args: state.settings.ext.winArgs, url: dlExt(url), title, playlist: list.map(x => ({ ...x, url: dlExt(x.url) })), subUrl, kids: isKids(ctx && ctx.it), live: !!(list.live || (ctx && ctx.it && ctx.it.kind === 'live')) }).catch(e => ({ ok: false, msg: e.message }));
     if (!r.ok) toast('Openen mislukt: ' + (r.msg || 'onbekende fout'), 4000); else toast('Geopend in ' + extName() + (list.length > 1 ? (list.live ? ' — volgende zender: toets “volgende” in de speler' : ' — volgende afleveringen spelen automatisch') : ''));
     return;

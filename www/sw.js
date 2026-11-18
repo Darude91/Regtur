@@ -1,5 +1,5 @@
 // Kijkdoos service worker: app-shell offline, streams altijd via netwerk.
-const V = 'kijkdoos-v29';
+const V = 'kijkdoos-v31';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'vendor/hls.min.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 // In de Android/Electron-app zit alles al in de app: een service worker is daar alleen een bron van oude versies
 const IN_APP = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && location.port === '';

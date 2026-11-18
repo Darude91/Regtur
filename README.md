@@ -122,3 +122,11 @@ In de ingebouwde mpv-speler (Windows en Android) wordt de Nederlandse ondertitel
 - hls.js-update teruggedraaid (weer het meegeleverde bestand).
 - "Audiospoor automatisch kiezen" is een instelling; op Android standaard UIT (de stream kiest zelf, zoals eerst), elders aan. Na een handmatige keuze met 🔊 verandert de app het spoor nooit meer zelf.
 - Externe speler op Android: geen OpenSubtitles-wachttijd en geen extra ondertitel-extras meer bij het starten; de eigen spelerlijst bevat nu ook bekende, geïnstalleerde spelers (VLC, mpv, MX, Just Player, Kodi…) als de Android-resolver niets teruggeeft.
+
+## Versie 26 — ondertitel-fallback (tv en mobiel)
+Na ~8 seconden kijkt de ingebouwde speler opnieuw: zit er dan geen Nederlandse ondertitel in de stream (en is de audio niet Nederlands, en heb je niet zelf iets gekozen), dan haalt hij er een bij OpenSubtitles. Is die er niet, dan blijft een Engelse ondertitel uit de stream staan; zit er helemaal niets in, dan wordt Engels van OpenSubtitles geprobeerd. Heeft de stream zelf al Nederlandse ondertitels, dan wordt die gekozen (anders Engels).
+
+## Versie 27 — ondertitel-fallback ook in externe spelers (Windows)
+mpv: de app start hem met een IPC-kanaal; na ~8 s wordt gekeken of er een Nederlandse ondertitel is (en de audio niet Nederlands is). Zo niet, dan wordt er een via OpenSubtitles bijgezet (NL, anders EN) en geselecteerd.
+VLC: idem via VLC's HTTP-interface (alleen op 127.0.0.1, met wachtwoord). Werkt niet als VLC al draaide en de nieuwe titel alleen aan de lopende VLC wordt toegevoegd.
+Android externe spelers (VLC/mpv/MX): na het starten is er geen verbinding meer met de speler, dus hier kan de ondertitel niet achteraf worden toegevoegd; gebruik de ingebouwde speler of de ondertitelkeuze van de externe speler zelf.

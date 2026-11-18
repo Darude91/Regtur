@@ -82,7 +82,7 @@ ipcMain.handle('kd:browsePlayer', async () => {
  * Start de speler. Bij meerdere afleveringen wordt een afspeellijst (.m3u) geopend, beginnend bij de
  * gekozen aflevering; VLC, mpv, MPC-HC en PotPlayer spelen die vanzelf achter elkaar af.
  */
-ipcMain.handle('kd:openPlayer', async (_e, o) => {
+ipcMain.handle('kd:openPlayer', async (e, o) => {
   const exe = o && o.path;
   if (!exe || !fs.existsSync(exe)) return { ok: false, msg: 'Speler niet gevonden: ' + exe };
   const list = Array.isArray(o.playlist) && o.playlist.length ? o.playlist : [{ url: o.url, title: o.title }];
@@ -107,14 +107,66 @@ ipcMain.handle('kd:openPlayer', async (_e, o) => {
   // Audio: gewone titels Engels (anders Nederlands), kindertitels Nederlands (anders Engels); ondertitels NL, anders EN
   if (/^mpv/.test(base)) argv.unshift(o.kids ? '--alang=nl,nld,dut,en,eng' : '--alang=en,eng,nl,nld,dut', '--slang=nl,nld,dut,en,eng', ...(o.live ? [] : ['--save-position-on-quit']));
   else if (/^vlc/.test(base)) argv.unshift(o.kids ? '--audio-language=nl,en' : '--audio-language=en,nl', '--sub-language=nl,en', ...(o.live ? [] : ['--qt-continue=2']));
+  // Vertraagde ondertitel-fallback: mpv via IPC, VLC via zijn HTTP-interface (alleen eerste titel, niet bij live)
+  let watch = null;
+  if (!o.live) {
+    if (/^mpv/.test(base)) { const pipe = '\\\\.\\pipe\\kd-ext-' + process.pid + '-' + Date.now(); argv.unshift('--input-ipc-server=' + pipe); watch = { kind: 'mpv', pipe }; }
+    else if (/^vlc/.test(base)) { const port = 20000 + Math.floor(Math.random() * 20000); argv.unshift('--extraintf=http', '--http-host=127.0.0.1', '--http-port=' + port, '--http-password=kd'); watch = { kind: 'vlc', port }; }
+  }
   return new Promise(resolve => {
     try {
       const p = spawn(exe, argv, { detached: true, stdio: 'ignore' });
-      p.on('error', e => resolve({ ok: false, msg: e.message }));
-      p.on('spawn', () => { p.unref(); resolve({ ok: true }); });
-    } catch (e) { resolve({ ok: false, msg: e.message }); }
+      p.on('error', err => resolve({ ok: false, msg: err.message }));
+      p.on('spawn', () => { p.unref(); resolve({ ok: true }); if (watch) watchExternal(e, p, watch); });
+    } catch (err) { resolve({ ok: false, msg: err.message }); }
   });
 });
+
+const SUB_DELAY_EXT = 8000;
+let vlcCtl = null;
+function watchExternal(e, p, w) {
+  const send = m => { try { e.sender.send('kd:mpv', m); } catch {} };
+  p.on('exit', () => { if (vlcCtl && vlcCtl.port === w.port) vlcCtl = null; send({ type: 'closed' }); });
+  if (w.kind === 'mpv') {
+    const me = { proc: p, sock: null, quit: false }; mpv = me;
+    setTimeout(() => {
+      let tries = 0;
+      const go = () => {
+        if (mpv !== me) return;
+        const sock = net.connect(w.pipe); let buf = ''; const pend = new Map(); let rid = 0;
+        const ask = prop => new Promise(res => { const id = ++rid; pend.set(id, res); try { sock.write(JSON.stringify({ command: ['get_property', prop], request_id: id }) + '\n'); } catch { res(null); } setTimeout(() => { if (pend.delete(id)) res(null); }, 1500); });
+        sock.on('connect', async () => {
+          me.sock = sock;
+          const al = await ask('current-tracks/audio/lang');
+          if (typeof al === 'string' && RE_NLCODE.test(al)) return;
+          const tl = await ask('track-list');
+          const subs = Array.isArray(tl) ? tl.filter(t => t.type === 'sub') : [];
+          if (!subs.some(t => RE_NLCODE.test(t.lang || '') || /dutch|nederl/i.test(t.title || ''))) send({ type: 'needSub', idx: 0, other: subs.some(t => !t.external) });
+        });
+        sock.on('data', d => { buf += d.toString('utf8'); let n; while ((n = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, n); buf = buf.slice(n + 1); try { const m = JSON.parse(line); if (m.request_id && pend.has(m.request_id)) { const f = pend.get(m.request_id); pend.delete(m.request_id); f(m.error === 'success' ? m.data : null); } } catch {} } });
+        sock.on('error', () => { sock.destroy(); if (!me.sock && ++tries < 5) setTimeout(go, 1000); });
+      };
+      go();
+    }, SUB_DELAY_EXT);
+  } else {
+    setTimeout(async () => {
+      try {
+        const auth = 'Basic ' + Buffer.from(':kd').toString('base64');
+        const r = await fetch('http://127.0.0.1:' + w.port + '/requests/status.xml', { headers: { Authorization: auth } });
+        if (!r.ok) return;
+        const xml = await r.text();
+        vlcCtl = { port: w.port, auth };
+        const cats = [...xml.matchAll(/<category name="Stream \d+">([\s\S]*?)<\/category>/g)].map(m => m[1]);
+        const info = (c, k) => { const m = c.match(new RegExp('<info name="' + k + '">([^<]*)<')); return m ? m[1] : ''; };
+        const subs = cats.filter(c => /subtitle/i.test(info(c, 'Type')));
+        const audios = cats.filter(c => /audio/i.test(info(c, 'Type')));
+        const isNl = c => /nederl|dutch|^nl|^nld|^dut/i.test(info(c, 'Language'));
+        if (audios.length && audios.every(isNl)) return;
+        if (!subs.some(isNl)) send({ type: 'needSub', idx: 0, other: subs.length > 0 });
+      } catch {}
+    }, SUB_DELAY_EXT);
+  }
+}
 
 
 // ---------- Ingebouwde speler: meegeleverde mpv (echte audio-/ondertitelkeuze) ----------
@@ -220,7 +272,7 @@ ipcMain.handle('kd:mpvPlay', async (e, o) => {
 });
 ipcMain.handle('kd:mpvSub', async (_e, url, lang) => {
   try {
-    if (!mpv || !mpv.sock) return false;
+    if (!(mpv && mpv.sock) && !vlcCtl) return false;
     let target = url;
     if (/^https?:/i.test(url)) {   // eerst naar een tijdelijk bestand: betrouwbaarder dan mpv zelf laten downloaden
       const r = await fetch(url, { headers: { 'User-Agent': 'Kijkdoos v1.2' } });
@@ -229,6 +281,11 @@ ipcMain.handle('kd:mpvSub', async (_e, url, lang) => {
       fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, Buffer.from(await r.arrayBuffer()));
     }
     const l = lang === 'en' ? 'en' : 'nl';
+    if (vlcCtl && !(mpv && mpv.sock)) {
+      const uri = 'file:///' + target.replace(/\\/g, '/');
+      const r = await fetch('http://127.0.0.1:' + vlcCtl.port + '/requests/status.xml?command=addsubtitle&val=' + encodeURIComponent(uri), { headers: { Authorization: vlcCtl.auth } });
+      return r.ok;
+    }
     mpv.sock.write(JSON.stringify({ command: ['sub-add', target, 'select', (l === 'nl' ? 'Nederlands' : 'English') + ' (OpenSubtitles)', l] }) + '\n');
     return true;
   } catch { return false; }
