@@ -292,6 +292,26 @@ ipcMain.handle('kd:mpvSub', async (_e, url, lang) => {
 });
 ipcMain.handle('kd:mpvStop', () => { mpvQuit(); return true; });
 
+// ---------- OpenSubtitles-moviehash (zorgt voor een ondertitel in sync met precies dit bestand) ----------
+ipcMain.handle('kd:movieHash', async (_e, url) => {
+  try {
+    const CH = 65536;
+    const get = async (range) => { const r = await fetch(url, { headers: { Range: range }, redirect: 'follow' }); return r; };
+    const r1 = await get('bytes=0-' + (CH - 1));
+    let size = 0;
+    const cr = r1.headers.get('content-range'); if (cr && /\/(\d+)$/.test(cr)) size = +cr.match(/\/(\d+)$/)[1];
+    if (r1.status !== 206 || !size || size < CH * 2) { try { await r1.body.cancel(); } catch {} return ''; }
+    const head = Buffer.from(await r1.arrayBuffer());
+    const r2 = await get('bytes=' + (size - CH) + '-' + (size - 1));
+    if (r2.status !== 206) { try { await r2.body.cancel(); } catch {} return ''; }
+    const tail = Buffer.from(await r2.arrayBuffer());
+    if (head.length < CH || tail.length < CH) return '';
+    let h = BigInt(size); const M = (1n << 64n) - 1n;
+    for (const b of [head, tail]) for (let i = 0; i < CH; i += 8) h = (h + b.readBigUInt64LE(i)) & M;
+    return h.toString(16).padStart(16, '0');
+  } catch { return ''; }
+});
+
 // ---------- Downloads (offline kijken) ----------
 const dl = require('./download');
 const dlDir = () => path.join(app.getPath('userData'), 'downloads');

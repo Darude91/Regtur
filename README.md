@@ -130,3 +130,8 @@ Na ~8 seconden kijkt de ingebouwde speler opnieuw: zit er dan geen Nederlandse o
 mpv: de app start hem met een IPC-kanaal; na ~8 s wordt gekeken of er een Nederlandse ondertitel is (en de audio niet Nederlands is). Zo niet, dan wordt er een via OpenSubtitles bijgezet (NL, anders EN) en geselecteerd.
 VLC: idem via VLC's HTTP-interface (alleen op 127.0.0.1, met wachtwoord). Werkt niet als VLC al draaide en de nieuwe titel alleen aan de lopende VLC wordt toegevoegd.
 Android externe spelers (VLC/mpv/MX): na het starten is er geen verbinding meer met de speler, dus hier kan de ondertitel niet achteraf worden toegevoegd; gebruik de ingebouwde speler of de ondertitelkeuze van de externe speler zelf.
+
+## Versie 28 — ondertitels in sync
+- De app berekent de OpenSubtitles-moviehash van het streambestand (eerste + laatste 64 KB, via Range-verzoeken; Windows en Android) en zoekt daarmee de ondertitel die precies bij die versie hoort ("exacte match"). Zonder hash (HLS, server zonder Range, browserversie) kiest hij op populariteit, met voorkeur voor betrouwbare uploaders en zonder slechthorenden/machinevertaling.
+- Films (ook in delen) worden nooit meer als aflevering gezocht.
+- Handmatig bijsturen: webspeler 🔊 → "Ondertitel eerder/later (±0,5 s)"; mpv: toets z / x; VLC: toets g / h.

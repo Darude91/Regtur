@@ -117,6 +117,50 @@ public class ExternalPlayerPlugin extends Plugin {
         else call.reject("speler wil deze stream niet openen", "OPEN_FAILED");
     }
 
+    /** OpenSubtitles-moviehash (eerste + laatste 64 KB van het bestand); leeg als de server geen Range-verzoeken doet. */
+    @PluginMethod
+    public void movieHash(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("hash", "");
+        try {
+            String url = call.getString("url");
+            final int CH = 65536;
+            long[] size = new long[1];
+            byte[] head = rangeBytes(url, 0, CH - 1, size);
+            if (head == null || size[0] < CH * 2L) { call.resolve(ret); return; }
+            byte[] tail = rangeBytes(url, size[0] - CH, size[0] - 1, new long[1]);
+            if (tail == null || head.length < CH || tail.length < CH) { call.resolve(ret); return; }
+            long h = size[0];
+            for (byte[] b : new byte[][]{ head, tail }) {
+                java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(b, 0, CH).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                for (int i = 0; i < CH / 8; i++) h += bb.getLong();
+            }
+            ret.put("hash", String.format(java.util.Locale.ROOT, "%016x", h));
+        } catch (Throwable ignored) { }
+        call.resolve(ret);
+    }
+
+    private byte[] rangeBytes(String url, long from, long to, long[] sizeOut) throws Exception {
+        String cur = url;
+        for (int hop = 0; hop < 6; hop++) {
+            HttpURLConnection c = (HttpURLConnection) new URL(cur).openConnection();
+            c.setInstanceFollowRedirects(false);
+            c.setConnectTimeout(10000); c.setReadTimeout(15000);
+            c.setRequestProperty("Range", "bytes=" + from + "-" + to);
+            c.setRequestProperty("User-Agent", "Kijkdoos");
+            int code = c.getResponseCode();
+            if (code / 100 == 3) { String loc = c.getHeaderField("Location"); c.disconnect(); if (loc == null) return null; cur = new URL(new URL(cur), loc).toString(); continue; }
+            if (code != 206) { c.disconnect(); return null; }
+            String cr = c.getHeaderField("Content-Range");
+            if (cr != null && cr.contains("/")) { try { sizeOut[0] = Long.parseLong(cr.substring(cr.lastIndexOf('/') + 1).trim()); } catch (Exception ignored) { } }
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            try (InputStream in = c.getInputStream()) { byte[] buf = new byte[16384]; int n; while ((n = in.read(buf)) > 0) bo.write(buf, 0, n); }
+            c.disconnect();
+            return bo.toByteArray();
+        }
+        return null;
+    }
+
     /** Eigen spelerkeuze: de standaard Android-kiezer ontbreekt of werkt niet op veel TV's. Geeft true terug als de lijst getoond wordt. */
     private boolean pickPlayer(final PluginCall call) {
         try {

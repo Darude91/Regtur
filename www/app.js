@@ -1395,37 +1395,55 @@ async function osCall(path, body) {
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r.json();
 }
-/** Zoek de beste Nederlandse (anders Engelse) ondertitel; geeft { fileId, lang } of null. */
-async function osFind(it, se, langs) {
+/** OpenSubtitles-moviehash van het streambestand (eerste + laatste 64 KB): geeft een ondertitel die precies bij DEZE versie hoort (dus in sync). */
+const hashMemo = new Map();
+async function movieHashFor(url) {
+  if (!url || !/^https?:/i.test(url) || /\.m3u8(\?|$)/i.test(url)) return '';
+  if (hashMemo.has(url)) return hashMemo.get(url);
+  let h = '';
+  try {
+    if (window.kdNative && window.kdNative.movieHash) h = await window.kdNative.movieHash(url);
+    else { const p = ENV.cap && extPlugin(); if (p && p.movieHash) { const r = await p.movieHash({ url }); h = (r && r.hash) || ''; } }
+  } catch {}
+  h = /^[0-9a-f]{16}$/.test(h || '') ? h : '';
+  hashMemo.set(url, h); return h;
+}
+/** Zoek de beste Nederlandse (anders Engelse) ondertitel; geeft { fileId, lang, exact } of null. */
+async function osFind(it, se, langs, hash) {
   const title = cleanTitle(it.title);
   for (const lang of (langs || ['nl', 'en'])) {
     // ronde 1: strikt (met jaar, geen slechthorenden); ronde 2: ook slechthorenden; ronde 3 (films): ook zonder jaar (jaar in de lijst klopt vaak niet)
     const rounds = se && se.season != null ? [0, 1] : [0, 1, 2];
     for (const rnd of rounds) {
       const q = new URLSearchParams({ query: title, languages: lang, order_by: 'download_count', order_direction: 'desc', ai_translated: 'exclude', foreign_parts_only: 'exclude' });
+      if (hash) q.set('moviehash', hash);
       if (rnd === 0) q.set('hearing_impaired', 'exclude');
       if (se && se.season != null) { q.set('type', 'episode'); q.set('season_number', se.season); q.set('episode_number', se.ep); }
       else { q.set('type', 'movie'); if (it.year && rnd < 2) q.set('year', it.year); }
       const j = await osCall('/subtitles?' + q.toString());
-      const hit = (j.data || []).find(d => d.attributes && d.attributes.files && d.attributes.files[0]);
-      if (hit) return { fileId: hit.attributes.files[0].file_id, lang };
+      const score = d => { const a = d.attributes; return (a.moviehash_match ? 1000 : 0) + (a.from_trusted ? 20 : 0) - (a.hearing_impaired ? 5 : 0) - (a.machine_translated ? 50 : 0); };
+      const cands = (j.data || []).filter(d => d.attributes && d.attributes.files && d.attributes.files[0]).sort((x, y) => score(y) - score(x));
+      const hit = cands[0];
+      if (hit) return { fileId: hit.attributes.files[0].file_id, lang, exact: !!hit.attributes.moviehash_match };
     }
   }
   return null;
 }
 const osKeyFor = (it, se, fmt, langs) => ['os', fmt, (langs || ['nl', 'en']).join(''), it.kind, cleanTitle(it.title).toLowerCase(), it.year || '', se ? se.season + 'x' + se.ep : ''].join('|');
 /** fmt 'webvtt' (voor <track>) of 'srt' (externe speler). Resultaat: { link, lang } of { text, lang }. */
-async function osGet(it, se, fmt, ignoreDutch, langs) {
+async function osGet(it, se, fmt, ignoreDutch, langs, url) {
   if (!osKeyVal() || state.settings.osMode === 'off' || !it || it.kind === 'live' || it.kind === 'catchup' || (!ignoreDutch && dutchOnlyItem(it))) return null;
-  const k = osKeyFor(it, se, fmt, langs);
+  if (it.kind !== 'series') se = null;                                          // films (ook in delen) zijn nooit een aflevering
+  const hash = await movieHashFor(url);
+  const k = osKeyFor(it, se, fmt, langs) + '|' + hash;
   const c = await IDB.get('http', k);
   if (fmt === 'webvtt' && c && c.v && c.v.text) return c.v;                       // al eens opgehaald: geen nieuwe download nodig
   if (fmt === 'srt' && c && c.v && c.v.link && Date.now() - c.t < 3 * 3600e3) return c.v;
-  const f = await osFind(it, se, langs); if (!f) return null;
+  const f = await osFind(it, se, langs, hash); if (!f) return null;
   const d = await osCall('/download', { file_id: f.fileId, sub_format: fmt });
   if (!d.link) return null;
-  let v = { lang: f.lang, link: d.link };
-  if (fmt === 'webvtt') { const r = await withTimeout(fetch(px(d.link), { cache: 'no-store' }), 15000); if (!r.ok) throw new Error('HTTP ' + r.status); v = { lang: f.lang, text: await r.text() }; }
+  let v = { lang: f.lang, link: d.link, exact: f.exact };
+  if (fmt === 'webvtt') { const r = await withTimeout(fetch(px(d.link), { cache: 'no-store' }), 15000); if (!r.ok) throw new Error('HTTP ' + r.status); v = { lang: f.lang, text: await r.text(), exact: f.exact }; }
   IDB.set('http', k, { v, t: Date.now() });
   return v;
 }
@@ -1507,7 +1525,7 @@ function osForPlayer(v, it, key) {
     if (!playCtx || playCtx.key !== key || v.paused && v.currentTime < 1 && v.readyState < 2) return;
     try {
       // geen Nederlandse ondertitel in de stream → altijd Nederlands ophalen (ook als er al een Engelse is); Engels alleen als er helemaal niets is
-      const r = await osGet(it, epInfo(playCtx.eps, playCtx.cur), 'webvtt', true, mp.subs > 0 ? ['nl'] : ['nl', 'en']); if (!r || !r.text) return;
+      const r = await osGet(it, epInfo(playCtx.eps, playCtx.cur), 'webvtt', true, mp.subs > 0 ? ['nl'] : ['nl', 'en'], playCtx.cur); if (!r || !r.text) return;
       if (!playCtx || playCtx.key !== key) return;
       const tr = document.createElement('track');
       tr.kind = 'subtitles'; tr.label = r.lang === 'nl' ? 'Nederlands' : 'English'; tr.srclang = r.lang;
@@ -1713,8 +1731,8 @@ if (ENV.electron && window.kdNative && window.kdNative.mpvAvailable) {
 async function mpvNeedSub(m, add) {
   const x = mpvList && mpvList[m.idx]; if (!x || !mpvList.it || mpvList.live) return;
   try {
-    const r = await osGet(mpvList.it, epInfo(mpvList.eps, x.key), 'srt', true, m.other ? ['nl'] : ['nl', 'en']);
-    if (r && r.link) { await add(r.link, r.lang); toast('Ondertitel (OpenSubtitles): ' + (r.lang === 'nl' ? 'Nederlands' : 'English'), 2500); }
+    const r = await osGet(mpvList.it, epInfo(mpvList.eps, x.key), 'srt', true, m.other ? ['nl'] : ['nl', 'en'], x.key);
+    if (r && r.link) { await add(r.link, r.lang); toast('Ondertitel (OpenSubtitles): ' + (r.lang === 'nl' ? 'Nederlands' : 'English') + (r.exact ? ' - exacte match' : ''), 2500); }
   } catch (e) { osError(e); }
 }
 let mpvSkip = false;
@@ -1898,6 +1916,7 @@ function openTrackList() {
   if (osKeyVal() && playCtx.it && playCtx.it.kind !== 'live' && playCtx.it.kind !== 'catchup') {
     h += row('os', 0, '🔎 Nederlandse ondertitel zoeken (OpenSubtitles)', false) + row('os', 1, '🔎 Engelse ondertitel zoeken (OpenSubtitles)', false);
   }
+  if (st.sSel >= 0) h += row('sh', -5, '⏪ Ondertitel eerder (−0,5 s)', false) + row('sh', 5, '⏩ Ondertitel later (+0,5 s)', false);
   if (!st.audio.length || !st.subs.length) h += row('ext', 0, '↗ Openen in ' + extName() + ' (alle sporen)', false);
   box.innerHTML = h; box.hidden = false; poke();
   const cur = $('.cur', box) || $('.zi', box);
@@ -1913,11 +1932,15 @@ async function pickTrack(b) {
     if (st.sKind === 'hls') { if (i < 0) hls.subtitleTrack = -1; else { hls.subtitleTrack = i; hls.subtitleDisplay = true; } }
     else st.subs.forEach((t, n) => { t.mode = n === i ? 'showing' : 'disabled'; });
     toast(i < 0 ? 'Ondertitels uit' : 'Ondertitel: ' + trackLabel(st.subs[i], i), 1800);
+  } else if (act === 'sh') {
+    const d = i / 10, t = st.subs[st.sSel];
+    if (t && t.cues) { for (const c of t.cues) { if (c.__s == null) { c.__s = c.startTime; c.__e = c.endTime; } c.startTime = Math.max(0, c.startTime + d); c.endTime = Math.max(0.1, c.endTime + d); } t.__off = (t.__off || 0) + d; toast('Ondertitel ' + (t.__off >= 0 ? '+' : '') + t.__off.toFixed(1) + ' s', 1500); }
+    else toast('Deze ondertitel kan niet verschoven worden', 2000);
   } else if (act === 'os') {
     const lang = i === 0 ? 'nl' : 'en';
     toast('Ondertitel zoeken…', 2500);
     try {
-      const r = await osGet(playCtx.it, epInfo(playCtx.eps, playCtx.cur), 'webvtt', true, [lang]);
+      const r = await osGet(playCtx.it, epInfo(playCtx.eps, playCtx.cur), 'webvtt', true, [lang], playCtx.cur);
       if (!r || !r.text) { toast('Geen ' + (lang === 'nl' ? 'Nederlandse' : 'Engelse') + ' ondertitel gevonden', 2500); return; }
       const tr = document.createElement('track');
       tr.kind = 'subtitles'; tr.label = lang === 'nl' ? 'Nederlands (OpenSubtitles)' : 'English (OpenSubtitles)'; tr.srclang = lang;

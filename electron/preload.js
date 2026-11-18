@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('kdNative', {
   mpvSub: (u, lang) => ipcRenderer.invoke('kd:mpvSub', u, lang),
   mpvStop: () => ipcRenderer.invoke('kd:mpvStop'),
   onMpv: cb => ipcRenderer.on('kd:mpv', (_e, d) => cb(d)),
+  movieHash: u => ipcRenderer.invoke('kd:movieHash', u),
   download: o => ipcRenderer.invoke('kd:download', o),
   pauseDownload: id => ipcRenderer.invoke('kd:dlpause', id),
   removeDownload: id => ipcRenderer.invoke('kd:dlremove', id),
