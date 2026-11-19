@@ -71,7 +71,7 @@ if (!state.settings.tvMode) state.settings.tvMode = 'auto';
 if (!state.settings.tvScale) state.settings.tvScale = 1;
 // mpv is de standaardspeler in de apps (Android: mpv, Android TV: MPVNova, Windows: mpv); de browser-versie houdt de webspeler.
 const MPV_DEFAULT = ENV.native || /Android/i.test(navigator.userAgent);
-state.settings.ext = Object.assign({ always: MPV_DEFAULT, app: MPV_DEFAULT ? 'auto' : 'chooser', pkg: '', winPath: '', winArgs: '' }, state.settings.ext || {});
+state.settings.ext = Object.assign({ always: MPV_DEFAULT, app: MPV_DEFAULT ? 'auto' : 'chooser', pkg: '', winPath: '', winArgs: '', liveWeb: true, swDecode: false }, state.settings.ext || {});
 if (MPV_DEFAULT && !state.settings.ext.mpvDefault) {   // eenmalig: bestaande installaties ook op mpv zetten
   state.settings.ext.mpvDefault = 1;
   state.settings.ext.always = true;
@@ -1663,7 +1663,9 @@ document.addEventListener('click', e => {
 
 function playAuto(url, title, it, eps, cur, zap, fromStart) {
   noteWatched(it);
-  if (state.settings.ext.always) openExternal(url, title, it ? { it, eps, cur: cur || url, zap } : null, fromStart); else play(url, title, it, eps, cur, zap, fromStart);
+  // live tv (en terugkijken) standaard in de webspeler: alleen die heeft de programmagids/terugkijk-knoppen
+  const web = it && (it.kind === 'live' || it.kind === 'catchup') && state.settings.ext.liveWeb !== false;
+  if (state.settings.ext.always && !web) openExternal(url, title, it ? { it, eps, cur: cur || url, zap } : null, fromStart); else play(url, title, it, eps, cur, zap, fromStart);
 }
 
 /** Wachtrij voor een externe speler: gekozen aflevering + alle volgende (zodat de speler zelf doorgaat). */
@@ -1699,7 +1701,7 @@ async function openExternal(url, title = '', ctx = null, fromStart = false) {
       for (let i = 0; i < list.length;) {
         const live = list.live || (ctx && ctx.it && ctx.it.kind === 'live');
         const start = live || (fromStart && i === 0) ? 0 : getPos(list[i].url);
-        const r = await plug.open({ url: dlExt(list[i].url), title: list[i].title, package: pkg, urls: list.slice(i).map(x => dlExt(x.url)), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '' });
+        const r = await plug.open({ url: dlExt(list[i].url), title: list[i].title, package: pkg, urls: list.slice(i).map(x => dlExt(x.url)), titles: list.slice(i).map(x => x.title), position: Math.round(start * 1000), subUrl: i === 0 ? subUrl : '', decodeMode: state.settings.ext.swDecode ? 2 : 0 });
         // onthoud waar je gestopt bent (bij een afspeellijst in de speler zelf weten we niet welk item het was)
         if (!live && (!r.playlist || list.length === 1) && r.position > 0) { if (r.completed) clearPos(list[i].url); else savePos(list[i].url, r.position / 1000, r.duration > 0 ? r.duration / 1000 : 0); }
         if (list.length < 2 || r.playlist || list.live) break;                 // speler regelt het zelf / geen serie
@@ -1869,7 +1871,7 @@ function renderSettings() {
   $('#setOmdb').value = state.settings.omdbKey || ''; $('#setOsKey').value = state.settings.osKey || ''; $('#setCatchup').value = state.settings.catchupExt || 'm3u8';
   $('#setProxy').value = state.settings.proxy || '';
   const e = state.settings.ext, m = extMode();
-  $('#setExtAlways').checked = !!e.always;
+  $('#setExtAlways').checked = !!e.always; $('#setLiveWeb').checked = e.liveWeb !== false; $('#setSwDecode').checked = !!e.swDecode;
   $('#extAndroid').hidden = m !== 'android'; $('#extWin').hidden = m !== 'windows'; $('#extWeb').hidden = m !== 'web';
   $('#setExtApp').innerHTML = ANDROID_PLAYERS.map(([id, n]) => `<option value="${id}" ${e.app === id ? 'selected' : ''}>${esc(n)}</option>`).join('');
   $('#setExtPkg').hidden = e.app !== 'custom'; $('#setExtPkg').value = e.pkg || '';
@@ -1902,6 +1904,8 @@ $('#settings').addEventListener('change', e => {
   if (t.id === 'setTVScale') { state.settings.tvScale = +t.value; saveSettings(); setUnit(); }
   if (t.id === 'setScan') { state.settings.scan = t.checked; saveSettings(); render(); toast(t.checked ? 'Controle aan — alleen wat in beeld is' : 'Controle uit — alleen de index'); }
   if (t.dataset.b) { state.settings.builtin[t.dataset.b] = t.checked; saveSettings(); reloadSoon(); }
+  if (t.id === 'setLiveWeb') { state.settings.ext.liveWeb = t.checked; saveSettings(); }
+  if (t.id === 'setSwDecode') { state.settings.ext.swDecode = t.checked; saveSettings(); }
   if (t.id === 'setExtAlways') { state.settings.ext.always = t.checked; saveSettings(); }
   if (t.id === 'setExtApp') { state.settings.ext.app = t.value; saveSettings(); renderSettings(); }
   if (t.id === 'setExtPkg') { state.settings.ext.pkg = t.value.trim(); saveSettings(); }

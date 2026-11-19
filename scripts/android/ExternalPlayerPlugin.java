@@ -70,6 +70,9 @@ public class ExternalPlayerPlugin extends Plugin {
             i.putExtra("subtitles_location", subUrl);
         }
 
+        int decodeMode = call.getData() == null ? 0 : call.getData().optInt("decodeMode", 0);
+        if (decodeMode > 0 && isMpv(pkg)) i.putExtra("decode_mode", (byte) decodeMode);   // 2 = software (mpv-android/MPVNova)
+
         boolean playlist = false;
         if (pkg.startsWith("com.mxtech.videoplayer")) {
             // MX Player begrijpt een hele afspeellijst
